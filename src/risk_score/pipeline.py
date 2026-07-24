@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import joblib
 import pandas as pd
 
 from risk_score.calibration import compute_calibration_curve, plot_calibration_curve
@@ -20,7 +21,11 @@ from risk_score.evaluation import (
 )
 from risk_score.feature_engineering import build_feature_matrix
 from risk_score.leakage_check import exclude_leaky_columns
-from risk_score.modeling import time_based_train_test_split, train_logistic_regression
+from risk_score.modeling import (
+    time_based_train_test_split,
+    train_logistic_regression,
+    train_xgboost_model,
+)
 
 
 def _predict_default_probability(model: Any, features: pd.DataFrame) -> pd.Series:
@@ -36,6 +41,8 @@ def run_baseline_pipeline(
     test_start_date: str,
     date_column: str = "issue_d",
     output_dir: str | Path = "reports",
+    model_type: str = "logistic_regression",
+    model_config: dict[str, Any] | None = None,
     cost_matrix: CostMatrix | None = None,
 ) -> ClassificationMetrics:
     """Run the minimal end-to-end logistic regression baseline pipeline.
@@ -47,8 +54,10 @@ def run_baseline_pipeline(
     output_path = Path(output_dir)
     metrics_path = output_path / "metrics"
     figures_path = output_path / "figures"
+    models_path = output_path / "models"
     metrics_path.mkdir(parents=True, exist_ok=True)
     figures_path.mkdir(parents=True, exist_ok=True)
+    models_path.mkdir(parents=True, exist_ok=True)
     if cost_matrix is None:
         cost_matrix = CostMatrix(false_negative_cost=5.0, false_positive_cost=1.0)
 
@@ -68,8 +77,15 @@ def run_baseline_pipeline(
         train_end_date=train_end_date,
         test_start_date=test_start_date,
     )
-    model = train_logistic_regression(split.x_train, split.y_train)
+    if model_type == "logistic_regression":
+        model = train_logistic_regression(split.x_train, split.y_train, config=model_config)
+    elif model_type == "xgboost":
+        model = train_xgboost_model(split.x_train, split.y_train, config=model_config)
+    else:
+        raise ValueError("Supported model types are `logistic_regression` and `xgboost`.")
+
     scores = _predict_default_probability(model, split.x_test)
+    joblib.dump(model, models_path / f"{model_type}.joblib")
 
     metrics = ClassificationMetrics(
         auc_roc=compute_auc_roc(split.y_test, scores),
@@ -87,17 +103,18 @@ def run_baseline_pipeline(
         "selected_threshold": threshold,
         "false_negative_cost": cost_matrix.false_negative_cost,
         "false_positive_cost": cost_matrix.false_positive_cost,
+        "model_type": model_type,
     }
-    (metrics_path / "baseline_metrics.json").write_text(
+    (metrics_path / f"{model_type}_metrics.json").write_text(
         json.dumps(metrics_payload, indent=2),
         encoding="utf-8",
     )
 
     calibration_data = compute_calibration_curve(split.y_test, scores)
-    calibration_data.to_csv(metrics_path / "baseline_calibration.csv", index=False)
+    calibration_data.to_csv(metrics_path / f"{model_type}_calibration.csv", index=False)
     plot_calibration_curve(
         calibration_data,
-        output_path=str(figures_path / "baseline_calibration.png"),
+        output_path=str(figures_path / f"{model_type}_calibration.png"),
     )
 
     return metrics

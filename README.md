@@ -137,7 +137,9 @@ python scripts/run_baseline.py \
   --test-start-date 2017-01-01
 ```
 
-The baseline writes metrics to `reports/metrics/` and a calibration plot to `reports/figures/`.
+The baseline writes metrics to `reports/metrics/`, a calibration plot to `reports/figures/`, and a fitted model artifact to `reports/models/`.
+
+To run the XGBoost model instead, pass `--model-type xgboost`.
 
 ## Data
 

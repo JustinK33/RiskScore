@@ -2,6 +2,7 @@
 
 __all__ = [
     "calibration",
+    "config",
     "data_loading",
     "evaluation",
     "feature_engineering",
