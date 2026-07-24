@@ -105,11 +105,18 @@ def get_post_origination_columns(columns: list[str] | pd.Index) -> list[str]:
     return [column for column in columns if column in known_leaky]
 
 
-def exclude_leaky_columns(loans: pd.DataFrame) -> pd.DataFrame:
+def exclude_leaky_columns(
+    loans: pd.DataFrame,
+    *,
+    keep_columns: tuple[str, ...] = ("default_flag",),
+) -> pd.DataFrame:
     """Drop known post-origination leakage columns from a loan dataframe.
 
     TODO:
-        Preserve target columns only when explicitly requested by the modeling
-        pipeline and log every excluded field for reproducibility.
+        Add structured logging for every excluded field for reproducibility.
     """
-    raise NotImplementedError("Exclude post-origination leakage columns.")
+    protected = set(keep_columns)
+    leaky_columns = [
+        column for column in get_post_origination_columns(loans.columns) if column not in protected
+    ]
+    return loans.drop(columns=leaky_columns)

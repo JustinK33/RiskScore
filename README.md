@@ -128,6 +128,17 @@ Run the test suite.
 pytest
 ```
 
+Run the MVP logistic regression baseline after placing Lending Club data under `data/raw/`.
+
+```bash
+python scripts/run_baseline.py \
+  --raw-data-path data/raw/lending_club_loans.csv \
+  --train-end-date 2016-12-31 \
+  --test-start-date 2017-01-01
+```
+
+The baseline writes metrics to `reports/metrics/` and a calibration plot to `reports/figures/`.
+
 ## Data
 
 Download Lending Club loan data from the original source or a trusted mirror and place raw files under `data/raw/`.

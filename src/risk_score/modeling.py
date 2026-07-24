@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 @dataclass(frozen=True)
@@ -27,10 +32,72 @@ def time_based_train_test_split(
     """Split observations by date so later vintages are held out for testing.
 
     TODO:
-        Validate date parsing, prevent overlap between train and test windows,
-        and preserve chronological ordering within each partition.
+        Add optional validation windows for calibration and hyperparameter
+        tuning without contaminating the final test set.
     """
-    raise NotImplementedError("Create time-based train/test split.")
+    if date_column not in features.columns:
+        raise KeyError(f"Date column `{date_column}` is missing from features.")
+    if len(features) != len(target):
+        raise ValueError("Features and target must have the same number of rows.")
+
+    working = features.copy()
+    working["_split_date"] = pd.to_datetime(working[date_column], errors="coerce")
+    if working["_split_date"].isna().any():
+        raise ValueError(f"Date column `{date_column}` contains invalid or missing dates.")
+
+    train_end = pd.Timestamp(train_end_date)
+    test_start = pd.Timestamp(test_start_date)
+    if train_end >= test_start:
+        raise ValueError("`train_end_date` must be earlier than `test_start_date`.")
+
+    train_mask = working["_split_date"] <= train_end
+    test_mask = working["_split_date"] >= test_start
+
+    x_train = working.loc[train_mask].sort_values("_split_date").drop(
+        columns=["_split_date", date_column]
+    )
+    x_test = working.loc[test_mask].sort_values("_split_date").drop(
+        columns=["_split_date", date_column]
+    )
+    y_train = target.loc[x_train.index]
+    y_test = target.loc[x_test.index]
+
+    if x_train.empty or x_test.empty:
+        raise ValueError("Time-based split produced an empty train or test set.")
+
+    return TimeSplit(x_train=x_train, x_test=x_test, y_train=y_train, y_test=y_test)
+
+
+def build_preprocessor(features: pd.DataFrame) -> ColumnTransformer:
+    """Create a preprocessing transformer for mixed numeric and categorical data."""
+    numeric_columns = features.select_dtypes(include=["number", "bool"]).columns.tolist()
+    categorical_columns = [
+        column for column in features.columns if column not in set(numeric_columns)
+    ]
+
+    numeric_pipeline = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    categorical_pipeline = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("one_hot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]
+    )
+
+    transformers: list[tuple[str, Pipeline, list[str]]] = []
+    if numeric_columns:
+        transformers.append(("numeric", numeric_pipeline, numeric_columns))
+    if categorical_columns:
+        transformers.append(("categorical", categorical_pipeline, categorical_columns))
+
+    if not transformers:
+        raise ValueError("No usable feature columns were provided.")
+
+    return ColumnTransformer(transformers=transformers)
 
 
 def train_logistic_regression(
@@ -42,10 +109,24 @@ def train_logistic_regression(
     """Train the regularized logistic regression baseline.
 
     TODO:
-        Build a scikit-learn pipeline with preprocessing, class weighting, and
-        a calibrated probability output if needed.
+        Add experiment tracking and model artifact persistence.
     """
-    raise NotImplementedError("Train logistic regression baseline.")
+    params = {
+        "C": 1.0,
+        "max_iter": 1000,
+        "class_weight": "balanced",
+        "random_state": 42,
+    }
+    if config:
+        params.update(config)
+
+    model = Pipeline(
+        steps=[
+            ("preprocessor", build_preprocessor(x_train)),
+            ("classifier", LogisticRegression(**params)),
+        ]
+    )
+    return model.fit(x_train, y_train)
 
 
 def train_xgboost_model(
@@ -57,7 +138,30 @@ def train_xgboost_model(
     """Train the main XGBoost credit default model.
 
     TODO:
-        Add parameter loading, validation monitoring, early stopping, and model
-        artifact persistence.
+        Add validation monitoring, early stopping, and artifact persistence.
     """
-    raise NotImplementedError("Train XGBoost model.")
+    try:
+        from xgboost import XGBClassifier
+    except ImportError as exc:
+        raise ImportError("Install xgboost to train the main model.") from exc
+
+    params = {
+        "n_estimators": 100,
+        "max_depth": 3,
+        "learning_rate": 0.05,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "objective": "binary:logistic",
+        "eval_metric": "aucpr",
+        "random_state": 42,
+    }
+    if config:
+        params.update(config)
+
+    model = Pipeline(
+        steps=[
+            ("preprocessor", build_preprocessor(x_train)),
+            ("classifier", XGBClassifier(**params)),
+        ]
+    )
+    return model.fit(x_train, y_train)

@@ -6,7 +6,6 @@ split:
   test_start_date: "2017-01-01"
 
 logistic_regression:
-  penalty: l2
   C: 1.0
   max_iter: 1000
   class_weight: balanced

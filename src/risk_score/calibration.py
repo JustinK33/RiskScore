@@ -3,6 +3,7 @@
 from typing import Any
 
 import pandas as pd
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 
 
 def compute_calibration_curve(
@@ -14,10 +15,20 @@ def compute_calibration_curve(
     """Compute observed default rates versus predicted probabilities by bin.
 
     TODO:
-        Use scikit-learn calibration utilities or a custom binning strategy and
-        return a dataframe suitable for plotting and reporting.
+        Add sample counts per bin for richer diagnostics.
     """
-    raise NotImplementedError("Compute calibration curve.")
+    observed, predicted = calibration_curve(
+        y_true,
+        y_score,
+        n_bins=n_bins,
+        strategy="quantile",
+    )
+    return pd.DataFrame(
+        {
+            "mean_predicted_probability": predicted,
+            "observed_default_rate": observed,
+        }
+    )
 
 
 def plot_calibration_curve(
@@ -28,10 +39,31 @@ def plot_calibration_curve(
     """Create a calibration plot and optionally save it to disk.
 
     TODO:
-        Plot predicted probability against observed default frequency, include
-        a diagonal reference line, and save to `reports/figures/`.
+        Add styling conventions for final report charts.
     """
-    raise NotImplementedError("Plot calibration curve.")
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Perfect calibration")
+    ax.plot(
+        calibration_data["mean_predicted_probability"],
+        calibration_data["observed_default_rate"],
+        marker="o",
+        label="Model",
+    )
+    ax.set_xlabel("Mean predicted default probability")
+    ax.set_ylabel("Observed default rate")
+    ax.set_title("Calibration Plot")
+    ax.legend()
+    fig.tight_layout()
+
+    if output_path is not None:
+        fig.savefig(output_path, dpi=150)
+
+    return fig
 
 
 def calibrate_model(
@@ -44,7 +76,11 @@ def calibrate_model(
     """Fit a post-training probability calibration wrapper.
 
     TODO:
-        Support isotonic and sigmoid calibration after a validation split has
-        been selected without contaminating the final test set.
+        Ensure callers reserve a calibration split distinct from the final test
+        set.
     """
-    raise NotImplementedError("Calibrate model probabilities.")
+    if method not in {"isotonic", "sigmoid"}:
+        raise ValueError("Calibration method must be `isotonic` or `sigmoid`.")
+
+    calibrated = CalibratedClassifierCV(model, method=method, cv="prefit")
+    return calibrated.fit(x_calibration, y_calibration)

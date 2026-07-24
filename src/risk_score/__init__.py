@@ -7,4 +7,5 @@ __all__ = [
     "feature_engineering",
     "leakage_check",
     "modeling",
+    "pipeline",
 ]

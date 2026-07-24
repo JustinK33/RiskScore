@@ -4,11 +4,10 @@ The functions in this module should keep raw ingestion separate from feature
 engineering and modeling.
 """
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
-
 
 CLOSED_LOAN_STATUSES: set[str] = {
     "Fully Paid",
@@ -40,10 +39,26 @@ def load_lending_club_data(
         Raw loan records filtered to closed loan outcomes.
 
     TODO:
-        Add robust file type handling, schema validation, dtype normalization,
-        and logging.
+        Add richer schema validation, dtype normalization, and structured
+        logging once the exact Lending Club extract is selected.
     """
-    raise NotImplementedError("Load raw Lending Club data and filter to closed loans.")
+    data_path = Path(path)
+    if not data_path.exists():
+        raise FileNotFoundError(f"Input data file does not exist: {data_path}")
+
+    if data_path.suffix.lower() == ".csv":
+        loans = pd.read_csv(data_path, low_memory=False)
+    elif data_path.suffix.lower() in {".parquet", ".pq"}:
+        loans = pd.read_parquet(data_path)
+    else:
+        raise ValueError("Supported raw data formats are CSV and parquet.")
+
+    if "loan_status" not in loans.columns:
+        raise KeyError("Expected Lending Club column `loan_status` is missing.")
+
+    normalized_statuses = {status.strip().lower() for status in closed_statuses}
+    status = loans["loan_status"].astype("string").str.strip().str.lower()
+    return loans.loc[status.isin(normalized_statuses)].copy()
 
 
 def create_default_target(
@@ -54,8 +69,30 @@ def create_default_target(
 ) -> pd.DataFrame:
     """Create a binary default target from terminal loan statuses.
 
+    Ambiguous or non-terminal statuses are left as missing so callers can decide
+    whether to filter or audit them.
+
     TODO:
-        Map charged-off and default-like statuses to 1, fully paid statuses to 0,
-        and document any ambiguous statuses that are excluded.
+        Expand the mapping if a specific Lending Club vintage contains
+        additional terminal statuses.
     """
-    raise NotImplementedError("Create default target from terminal loan status.")
+    if status_column not in loans.columns:
+        raise KeyError(f"Expected status column `{status_column}` is missing.")
+
+    default_statuses = {
+        "charged off",
+        "default",
+        "does not meet the credit policy. status:charged off",
+    }
+    paid_statuses = {
+        "fully paid",
+        "does not meet the credit policy. status:fully paid",
+    }
+
+    result = loans.copy()
+    normalized_status = result[status_column].astype("string").str.strip().str.lower()
+    result[target_column] = pd.NA
+    result.loc[normalized_status.isin(default_statuses), target_column] = 1
+    result.loc[normalized_status.isin(paid_statuses), target_column] = 0
+    result[target_column] = result[target_column].astype("Int64")
+    return result
