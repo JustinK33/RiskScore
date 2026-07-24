@@ -63,7 +63,13 @@ def time_based_train_test_split(
     y_test = target.loc[x_test.index]
 
     if x_train.empty or x_test.empty:
-        raise ValueError("Time-based split produced an empty train or test set.")
+        observed_min = working["_split_date"].min().date().isoformat()
+        observed_max = working["_split_date"].max().date().isoformat()
+        raise ValueError(
+            "Time-based split produced an empty train or test set. "
+            f"Available date range is {observed_min} to {observed_max}. "
+            f"Train rows: {len(x_train)}. Test rows: {len(x_test)}."
+        )
 
     return TimeSplit(x_train=x_train, x_test=x_test, y_train=y_train, y_test=y_test)
 

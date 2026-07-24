@@ -53,20 +53,23 @@ def main() -> None:
     config = load_yaml_config(args.model_config)
     schema_config = load_yaml_config(args.schema_config)
     selected_model_config = config.get(args.model_type, {})
-    metrics = run_baseline_pipeline(
-        args.raw_data_path,
-        train_end_date=args.train_end_date,
-        test_start_date=args.test_start_date,
-        date_column=args.date_column,
-        output_dir=args.output_dir,
-        model_type=args.model_type,
-        model_config=selected_model_config,
-        schema_config=schema_config,
-        cost_matrix=CostMatrix(
-            false_negative_cost=args.false_negative_cost,
-            false_positive_cost=args.false_positive_cost,
-        ),
-    )
+    try:
+        metrics = run_baseline_pipeline(
+            args.raw_data_path,
+            train_end_date=args.train_end_date,
+            test_start_date=args.test_start_date,
+            date_column=args.date_column,
+            output_dir=args.output_dir,
+            model_type=args.model_type,
+            model_config=selected_model_config,
+            schema_config=schema_config,
+            cost_matrix=CostMatrix(
+                false_negative_cost=args.false_negative_cost,
+                false_positive_cost=args.false_positive_cost,
+            ),
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        raise SystemExit(f"Pipeline failed: {exc}") from None
     print(metrics)
 
 

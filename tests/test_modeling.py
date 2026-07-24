@@ -1,6 +1,7 @@
 """Tests for train/test splitting and baseline modeling."""
 
 import pandas as pd
+import pytest
 
 from risk_score.modeling import time_based_train_test_split, train_logistic_regression
 
@@ -26,6 +27,26 @@ def test_time_based_split_uses_chronological_holdout() -> None:
     assert split.x_train["loan_amnt"].tolist() == [1000, 2000]
     assert split.x_test["loan_amnt"].tolist() == [3000, 4000]
     assert "issue_d" not in split.x_train.columns
+
+
+def test_time_based_split_error_includes_available_date_range() -> None:
+    """Invalid split windows should explain the observed date coverage."""
+    features = pd.DataFrame(
+        {
+            "issue_d": ["2018-01-01", "2018-02-01", "2018-03-01"],
+            "loan_amnt": [1000, 2000, 3000],
+        }
+    )
+    target = pd.Series([0, 1, 0])
+
+    with pytest.raises(ValueError, match="Available date range is 2018-01-01 to 2018-03-01"):
+        time_based_train_test_split(
+            features,
+            target,
+            date_column="issue_d",
+            train_end_date="2016-12-31",
+            test_start_date="2017-01-01",
+        )
 
 
 def test_train_logistic_regression_returns_probability_model() -> None:
