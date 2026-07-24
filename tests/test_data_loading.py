@@ -1,11 +1,13 @@
 """Tests for Lending Club data loading helpers."""
 
+from pathlib import Path
+
 import pandas as pd
 
 from risk_score.data_loading import create_default_target, load_lending_club_data
 
 
-def test_load_lending_club_data_filters_to_closed_loans(tmp_path) -> None:
+def test_load_lending_club_data_filters_to_closed_loans(tmp_path: Path) -> None:
     """Only terminal loan outcomes should survive the raw loading filter."""
     raw_path = tmp_path / "loans.csv"
     pd.DataFrame(

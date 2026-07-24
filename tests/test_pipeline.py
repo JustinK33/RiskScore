@@ -1,11 +1,13 @@
 """Smoke tests for the runnable MVP pipeline."""
 
+from pathlib import Path
+
 import pandas as pd
 
 from risk_score.pipeline import run_baseline_pipeline
 
 
-def test_run_baseline_pipeline_writes_metrics_and_calibration_outputs(tmp_path) -> None:
+def test_run_baseline_pipeline_writes_metrics_and_calibration_outputs(tmp_path: Path) -> None:
     """The MVP pipeline should run end to end on Lending Club-shaped data."""
     raw_path = tmp_path / "loans.csv"
     output_dir = tmp_path / "reports"
