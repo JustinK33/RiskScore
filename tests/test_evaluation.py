@@ -6,8 +6,10 @@ import pytest
 from risk_score.evaluation import (
     CostMatrix,
     compute_auc_roc,
+    compute_brier_score,
     compute_ks_statistic,
     compute_precision_recall,
+    compute_threshold_cost_table,
     select_threshold_by_cost,
 )
 
@@ -38,6 +40,42 @@ def test_compute_ks_statistic_returns_valid_range() -> None:
     result = compute_ks_statistic(y_true, y_score)
 
     assert 0 <= result <= 1
+
+
+def test_compute_brier_score_returns_valid_probability_loss() -> None:
+    """Brier score should summarize probability accuracy on a 0 to 1 scale."""
+    y_true = pd.Series([0, 0, 1, 1])
+    y_score = pd.Series([0.1, 0.2, 0.8, 0.9])
+
+    result = compute_brier_score(y_true, y_score)
+
+    assert 0 <= result <= 1
+
+
+def test_compute_threshold_cost_table_reports_operating_characteristics() -> None:
+    """Threshold reporting should expose confusion counts and business cost."""
+    y_true = pd.Series([0, 1, 1, 0])
+    y_score = pd.Series([0.2, 0.4, 0.9, 0.8])
+    cost_matrix = CostMatrix(false_negative_cost=5.0, false_positive_cost=1.0)
+
+    result = compute_threshold_cost_table(
+        y_true,
+        y_score,
+        cost_matrix=cost_matrix,
+        thresholds=[0.3, 0.5],
+    )
+
+    assert list(result["threshold"]) == [0.3, 0.5]
+    assert {
+        "true_positives",
+        "false_positives",
+        "true_negatives",
+        "false_negatives",
+        "predicted_default_rate",
+        "approval_rate",
+        "total_cost",
+    }.issubset(result.columns)
+    assert result["total_cost"].min() >= 0
 
 
 def test_select_threshold_by_cost_prefers_lower_false_negative_cost() -> None:

@@ -15,8 +15,10 @@ from risk_score.evaluation import (
     ClassificationMetrics,
     CostMatrix,
     compute_auc_roc,
+    compute_brier_score,
     compute_ks_statistic,
     compute_precision_recall,
+    compute_threshold_cost_table,
     select_threshold_by_cost,
 )
 from risk_score.feature_engineering import build_feature_matrix
@@ -94,20 +96,35 @@ def run_baseline_pipeline(
     scores = _predict_default_probability(model, split.x_test)
     joblib.dump(model, models_path / f"{model_type}.joblib")
 
+    threshold = select_threshold_by_cost(split.y_test, scores, cost_matrix=cost_matrix)
+    threshold_cost_table = compute_threshold_cost_table(
+        split.y_test,
+        scores,
+        cost_matrix=cost_matrix,
+    )
+    selected_threshold_row = threshold_cost_table.loc[
+        threshold_cost_table["threshold"].eq(threshold)
+    ].iloc[0]
     metrics = ClassificationMetrics(
         auc_roc=compute_auc_roc(split.y_test, scores),
         average_precision=float(
             compute_precision_recall(split.y_test, scores)["average_precision"].iloc[0]
         ),
         ks_statistic=compute_ks_statistic(split.y_test, scores),
+        brier_score=compute_brier_score(split.y_test, scores),
+        default_rate=float(split.y_test.mean()),
+        approval_rate=float(selected_threshold_row["approval_rate"]),
     )
-    threshold = select_threshold_by_cost(split.y_test, scores, cost_matrix=cost_matrix)
 
     metrics_payload = {
         "auc_roc": metrics.auc_roc,
         "average_precision": metrics.average_precision,
         "ks_statistic": metrics.ks_statistic,
+        "brier_score": metrics.brier_score,
+        "default_rate": metrics.default_rate,
+        "approval_rate": metrics.approval_rate,
         "selected_threshold": threshold,
+        "selected_threshold_total_cost": float(selected_threshold_row["total_cost"]),
         "false_negative_cost": cost_matrix.false_negative_cost,
         "false_positive_cost": cost_matrix.false_positive_cost,
         "model_type": model_type,
@@ -119,6 +136,7 @@ def run_baseline_pipeline(
 
     calibration_data = compute_calibration_curve(split.y_test, scores)
     calibration_data.to_csv(metrics_path / f"{model_type}_calibration.csv", index=False)
+    threshold_cost_table.to_csv(metrics_path / f"{model_type}_threshold_costs.csv", index=False)
     plot_calibration_curve(
         calibration_data,
         output_path=str(figures_path / f"{model_type}_calibration.png"),

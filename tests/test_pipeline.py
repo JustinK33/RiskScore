@@ -52,8 +52,12 @@ def test_run_baseline_pipeline_writes_metrics_and_calibration_outputs(tmp_path: 
     )
 
     assert 0 <= metrics.auc_roc <= 1
+    assert 0 <= metrics.brier_score <= 1
+    assert 0 <= metrics.default_rate <= 1
+    assert 0 <= metrics.approval_rate <= 1
     assert (output_dir / "metrics" / "logistic_regression_metrics.json").exists()
     assert (output_dir / "metrics" / "logistic_regression_calibration.csv").exists()
+    assert (output_dir / "metrics" / "logistic_regression_threshold_costs.csv").exists()
     assert (output_dir / "figures" / "logistic_regression_calibration.png").exists()
     assert (output_dir / "models" / "logistic_regression.joblib").exists()
 
