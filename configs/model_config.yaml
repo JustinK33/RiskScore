@@ -1,0 +1,31 @@
+# Model configuration for baseline and main model experiments.
+
+split:
+  date_column: issue_d
+  train_end_date: "2016-12-31"
+  test_start_date: "2017-01-01"
+
+logistic_regression:
+  penalty: l2
+  C: 1.0
+  max_iter: 1000
+  class_weight: balanced
+  random_state: 42
+
+xgboost:
+  n_estimators: 500
+  max_depth: 4
+  learning_rate: 0.05
+  subsample: 0.8
+  colsample_bytree: 0.8
+  objective: binary:logistic
+  eval_metric: aucpr
+  random_state: 42
+
+threshold_selection:
+  false_negative_cost: 5.0
+  false_positive_cost: 1.0
+  thresholds:
+    min: 0.01
+    max: 0.99
+    step: 0.01

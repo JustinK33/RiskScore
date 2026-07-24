@@ -1,0 +1,35 @@
+# Feature configuration for origination-time credit risk modeling.
+
+target:
+  column: default_flag
+  positive_class: 1
+
+date_columns:
+  issue_date: issue_d
+
+feature_columns:
+  numeric:
+    - loan_amnt
+    - annual_inc
+    - dti
+    - revol_bal
+    - revol_util
+    - fico_range_low
+    - fico_range_high
+  categorical:
+    - term
+    - grade
+    - sub_grade
+    - home_ownership
+    - purpose
+    - verification_status
+
+engineered_features:
+  - dti_clean
+  - credit_utilization
+  - fico_band
+  - loan_to_income_ratio
+
+leakage_policy:
+  exclude_post_origination_columns: true
+  fail_on_unknown_columns: false
