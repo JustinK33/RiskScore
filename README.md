@@ -141,6 +141,38 @@ The baseline writes metrics to `reports/metrics/`, a calibration plot to `report
 
 To run the XGBoost model instead, pass `--model-type xgboost`.
 
+## Dashboard
+
+After running the baseline, start the local dashboard server.
+
+```bash
+python scripts/serve_dashboard.py
+```
+
+Open `http://127.0.0.1:8765` in your browser.
+
+The dashboard reads the latest local metrics, calibration CSV, and calibration plot from `reports/`.
+
+You can also upload a Lending Club-like CSV from the dashboard and run the baseline from the browser.
+
+Generated reports and model artifacts remain ignored by git.
+
+## CSV Compatibility
+
+The pipeline normalizes common Lending Club-like column names to one internal schema.
+
+For example, it can map names such as `loan_amount`, `loanAmnt`, and `funded_amnt` to `loan_amnt`.
+
+It can also map names such as `annual_income` to `annual_inc`, `debt_to_income` to `dti`, and `issue_month` to `issue_d`.
+
+Supported aliases live in `configs/dataset_schema.yaml`.
+
+When a new CSV uses different names, add the source names to that config instead of changing pipeline code.
+
+The minimum practical fields are loan status, issue date, loan amount, annual income, DTI, and revolving utilization.
+
+FICO range columns are used when present, but the pipeline can run without them.
+
 ## Data
 
 Download Lending Club loan data from the original source or a trusted mirror and place raw files under `data/raw/`.

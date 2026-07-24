@@ -4,10 +4,13 @@ The functions in this module should keep raw ingestion separate from feature
 engineering and modeling.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
+
+from risk_score.schema import normalize_credit_schema
 
 CLOSED_LOAN_STATUSES: set[str] = {
     "Fully Paid",
@@ -22,6 +25,8 @@ def load_lending_club_data(
     path: str | Path,
     *,
     closed_statuses: Iterable[str] = CLOSED_LOAN_STATUSES,
+    column_aliases: Mapping[str, Any] | None = None,
+    date_column: str = "issue_d",
 ) -> pd.DataFrame:
     """Load Lending Club loan data and filter to closed loans only.
 
@@ -52,6 +57,12 @@ def load_lending_club_data(
         loans = pd.read_parquet(data_path)
     else:
         raise ValueError("Supported raw data formats are CSV and parquet.")
+
+    loans = normalize_credit_schema(
+        loans,
+        column_aliases=column_aliases,
+        date_column=date_column,
+    )
 
     if "loan_status" not in loans.columns:
         raise KeyError("Expected Lending Club column `loan_status` is missing.")

@@ -53,3 +53,22 @@ def test_build_feature_matrix_adds_all_core_features() -> None:
     assert {"dti_clean", "credit_utilization", "fico_band", "loan_to_income_ratio"}.issubset(
         result.columns
     )
+
+
+def test_build_feature_matrix_allows_missing_fico_columns() -> None:
+    """Datasets without origination FICO ranges should still be usable."""
+    loans = pd.DataFrame(
+        {
+            "dti": [18.2],
+            "revol_util": ["42.0%"],
+            "loan_amnt": [12_000.0],
+            "annual_inc": [60_000.0],
+        }
+    )
+
+    result = fe.build_feature_matrix(loans)
+
+    assert {"dti_clean", "credit_utilization", "loan_to_income_ratio"}.issubset(
+        result.columns
+    )
+    assert "fico_band" not in result.columns

@@ -30,6 +30,7 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+down.py
 
 # Reports and artifacts
 reports/figures/*

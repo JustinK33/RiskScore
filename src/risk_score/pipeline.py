@@ -20,7 +20,7 @@ from risk_score.evaluation import (
     select_threshold_by_cost,
 )
 from risk_score.feature_engineering import build_feature_matrix
-from risk_score.leakage_check import exclude_leaky_columns
+from risk_score.leakage_check import exclude_leaky_columns, select_origination_time_columns
 from risk_score.modeling import (
     time_based_train_test_split,
     train_logistic_regression,
@@ -43,6 +43,7 @@ def run_baseline_pipeline(
     output_dir: str | Path = "reports",
     model_type: str = "logistic_regression",
     model_config: dict[str, Any] | None = None,
+    schema_config: dict[str, Any] | None = None,
     cost_matrix: CostMatrix | None = None,
 ) -> ClassificationMetrics:
     """Run the minimal end-to-end logistic regression baseline pipeline.
@@ -61,10 +62,16 @@ def run_baseline_pipeline(
     if cost_matrix is None:
         cost_matrix = CostMatrix(false_negative_cost=5.0, false_positive_cost=1.0)
 
-    loans = load_lending_club_data(raw_data_path)
+    schema_config = schema_config or {}
+    loans = load_lending_club_data(
+        raw_data_path,
+        column_aliases=schema_config.get("column_aliases"),
+        date_column=date_column,
+    )
     loans = create_default_target(loans)
     loans = loans.dropna(subset=["default_flag"])
     loans = exclude_leaky_columns(loans)
+    loans = select_origination_time_columns(loans)
     loans = build_feature_matrix(loans)
 
     target = loans["default_flag"].astype(int)

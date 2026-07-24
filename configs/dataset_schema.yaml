@@ -1,0 +1,53 @@
+# Dataset schema aliases for Lending Club-like CSV imports.
+
+column_aliases:
+  loan_status:
+    - loan_status
+    - loanStatus
+    - status
+    - n
+  issue_d:
+    - issue_d
+    - issue_month
+    - issueDate
+    - issueMonth
+  loan_amnt:
+    - loan_amnt
+    - loan_amount
+    - loanAmnt
+    - funded_amnt
+    - fundedAmnt
+  annual_inc:
+    - annual_inc
+    - annual_income
+    - annualInc
+    - annualIncome
+  dti:
+    - dti
+    - debt_to_income
+    - debtToIncome
+  revol_util:
+    - revol_util
+    - revolUtil
+    - revol_utilization
+  fico_range_low:
+    - fico_range_low
+    - ficoRangeLow
+  fico_range_high:
+    - fico_range_high
+    - ficoRangeHigh
+  home_ownership:
+    - home_ownership
+    - homeownership
+    - homeOwnership
+  verification_status:
+    - verification_status
+    - verified_income
+    - isIncV
+  purpose:
+    - purpose
+    - loan_purpose
+  addr_state:
+    - addr_state
+    - state
+    - addrState

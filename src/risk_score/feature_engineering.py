@@ -91,6 +91,11 @@ def build_feature_matrix(loans: pd.DataFrame) -> pd.DataFrame:
     result = loans.copy()
     result = add_dti_feature(result)
     result = add_credit_utilization_feature(result)
-    result = add_fico_band_feature(result)
+    fico_columns = {"fico_range_low", "fico_range_high"}
+    if fico_columns.issubset(result.columns):
+        result = add_fico_band_feature(result)
+    elif fico_columns.intersection(result.columns):
+        missing = fico_columns.difference(result.columns)
+        raise KeyError(f"Missing required FICO columns: {sorted(missing)}")
     result = add_loan_to_income_ratio(result)
     return result

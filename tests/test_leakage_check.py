@@ -2,7 +2,11 @@
 
 import pandas as pd
 
-from risk_score.leakage_check import exclude_leaky_columns, get_post_origination_columns
+from risk_score.leakage_check import (
+    exclude_leaky_columns,
+    get_post_origination_columns,
+    select_origination_time_columns,
+)
 
 
 def test_get_post_origination_columns_flags_known_leaky_fields() -> None:
@@ -31,3 +35,20 @@ def test_exclude_leaky_columns_preserves_default_target() -> None:
     assert "total_pymnt" not in result.columns
     assert "default_flag" in result.columns
     assert "loan_amnt" in result.columns
+
+
+def test_select_origination_time_columns_drops_unknown_raw_fields() -> None:
+    """Only documented underwriting-time fields should reach the model."""
+    loans = pd.DataFrame(
+        {
+            "default_flag": [0],
+            "loan_amnt": [1000.0],
+            "annual_inc": [50_000.0],
+            "url": ["https://example.test/loan/1"],
+            "desc": ["Borrower-written text."],
+        }
+    )
+
+    result = select_origination_time_columns(loans)
+
+    assert result.columns.tolist() == ["default_flag", "loan_amnt", "annual_inc"]

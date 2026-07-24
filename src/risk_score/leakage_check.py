@@ -120,3 +120,17 @@ def exclude_leaky_columns(
         column for column in get_post_origination_columns(loans.columns) if column not in protected
     ]
     return loans.drop(columns=leaky_columns)
+
+
+def select_origination_time_columns(
+    loans: pd.DataFrame,
+    *,
+    keep_columns: tuple[str, ...] = ("default_flag",),
+) -> pd.DataFrame:
+    """Keep only documented origination-time fields plus protected columns."""
+    selected_columns = [
+        column
+        for column in (*keep_columns, *ORIGINATION_TIME_COLUMNS)
+        if column in loans.columns
+    ]
+    return loans.loc[:, selected_columns].copy()

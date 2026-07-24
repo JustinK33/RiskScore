@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Credit Risk Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Credit Default Risk</p>
+        <h1>Model Dashboard</h1>
+      </div>
+      <div class="status" id="status">Loading reports</div>
+    </header>
+
+    <main>
+      <section class="metrics-grid" aria-label="Model metrics">
+        <article class="metric">
+          <span>AUC ROC</span>
+          <strong id="aucRoc">-</strong>
+          <small>Ranking quality across thresholds</small>
+        </article>
+        <article class="metric">
+          <span>Average Precision</span>
+          <strong id="averagePrecision">-</strong>
+          <small>Precision-recall summary</small>
+        </article>
+        <article class="metric">
+          <span>KS Statistic</span>
+          <strong id="ksStatistic">-</strong>
+          <small>Separation between paid and defaulted loans</small>
+        </article>
+        <article class="metric">
+          <span>Selected Threshold</span>
+          <strong id="selectedThreshold">-</strong>
+          <small>Cost-aware cutoff for default probability</small>
+        </article>
+      </section>
+
+      <section class="panel-grid">
+        <article class="panel chart-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Calibration</h2>
+              <p>Predicted probability compared with observed default rate.</p>
+            </div>
+          </div>
+          <canvas id="calibrationChart" width="900" height="420"></canvas>
+        </article>
+
+        <aside class="panel side-panel">
+          <h2>Run Details</h2>
+          <dl>
+            <div>
+              <dt>Model</dt>
+              <dd id="modelType">-</dd>
+            </div>
+            <div>
+              <dt>False Negative Cost</dt>
+              <dd id="falseNegativeCost">-</dd>
+            </div>
+            <div>
+              <dt>False Positive Cost</dt>
+              <dd id="falsePositiveCost">-</dd>
+            </div>
+          </dl>
+          <div class="artifact-links">
+            <a href="/artifacts/metrics/logistic_regression_metrics.json">Metrics JSON</a>
+            <a href="/artifacts/metrics/logistic_regression_calibration.csv">Calibration CSV</a>
+            <a href="/artifacts/figures/logistic_regression_calibration.png">Calibration PNG</a>
+          </div>
+        </aside>
+      </section>
+
+      <section class="panel upload-panel">
+        <div>
+          <h2>Run A CSV</h2>
+          <p>Upload a Lending Club-like CSV, choose a time split, and refresh the dashboard with the new results.</p>
+        </div>
+        <form id="uploadForm" class="upload-form">
+          <label>
+            <span>CSV File</span>
+            <input id="csvFile" type="file" accept=".csv,text/csv" required />
+          </label>
+          <label>
+            <span>Train End Date</span>
+            <input id="trainEndDate" type="date" value="2016-12-31" required />
+          </label>
+          <label>
+            <span>Test Start Date</span>
+            <input id="testStartDate" type="date" value="2017-01-01" required />
+          </label>
+          <button type="submit" id="runButton">Run Baseline</button>
+        </form>
+        <p class="upload-message" id="uploadMessage"></p>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -33,6 +33,11 @@ def parse_args() -> argparse.Namespace:
         help="YAML config with split, model, and threshold settings.",
     )
     parser.add_argument(
+        "--schema-config",
+        default="configs/dataset_schema.yaml",
+        help="YAML config with dataset column aliases.",
+    )
+    parser.add_argument(
         "--output-dir",
         default="reports",
         help="Directory for metrics and figures.",
@@ -46,6 +51,7 @@ def main() -> None:
     """Run the MVP baseline pipeline."""
     args = parse_args()
     config = load_yaml_config(args.model_config)
+    schema_config = load_yaml_config(args.schema_config)
     selected_model_config = config.get(args.model_type, {})
     metrics = run_baseline_pipeline(
         args.raw_data_path,
@@ -55,6 +61,7 @@ def main() -> None:
         output_dir=args.output_dir,
         model_type=args.model_type,
         model_config=selected_model_config,
+        schema_config=schema_config,
         cost_matrix=CostMatrix(
             false_negative_cost=args.false_negative_cost,
             false_positive_cost=args.false_positive_cost,
