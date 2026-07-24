@@ -29,6 +29,8 @@ DEFAULT_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "open_acc": ("open_acc", "open_credit_lines", "openAcc"),
     "pub_rec": ("pub_rec", "pubRec"),
     "revol_bal": ("revol_bal", "revolBal"),
+    "total_credit_utilized": ("total_credit_utilized", "totalCreditUtilized"),
+    "total_credit_limit": ("total_credit_limit", "totalCreditLimit"),
     "total_acc": ("total_acc", "total_credit_lines", "totalAcc"),
 }
 

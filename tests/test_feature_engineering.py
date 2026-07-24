@@ -35,6 +35,15 @@ def test_add_credit_utilization_parses_percentage_strings() -> None:
     assert result.loc[0, "credit_utilization"] == pytest.approx(0.475)
 
 
+def test_add_credit_utilization_uses_total_credit_ratio_when_revol_util_is_missing() -> None:
+    """Utilization should work for bureau-style total balance and limit fields."""
+    loans = pd.DataFrame({"total_credit_utilized": [2_500.0], "total_credit_limit": [10_000.0]})
+
+    result = fe.add_credit_utilization_feature(loans)
+
+    assert result.loc[0, "credit_utilization"] == pytest.approx(0.25)
+
+
 def test_build_feature_matrix_adds_all_core_features() -> None:
     """Feature matrix builder should add all MVP engineered features."""
     loans = pd.DataFrame(

@@ -37,6 +37,26 @@
           <strong id="selectedThreshold">-</strong>
           <small>Cost-aware cutoff for default probability</small>
         </article>
+        <article class="metric">
+          <span>Brier Score</span>
+          <strong id="brierScore">-</strong>
+          <small>Lower is better for probability accuracy</small>
+        </article>
+        <article class="metric">
+          <span>Default Rate</span>
+          <strong id="defaultRate">-</strong>
+          <small>Observed default share in the test window</small>
+        </article>
+        <article class="metric">
+          <span>Approval Rate</span>
+          <strong id="approvalRate">-</strong>
+          <small>Share below the selected risk threshold</small>
+        </article>
+        <article class="metric">
+          <span>Selected Cost</span>
+          <strong id="selectedCost">-</strong>
+          <small>Total weighted error cost at cutoff</small>
+        </article>
       </section>
 
       <section class="panel-grid">
@@ -48,6 +68,16 @@
             </div>
           </div>
           <canvas id="calibrationChart" width="900" height="420"></canvas>
+        </article>
+
+        <article class="panel chart-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Threshold Cost</h2>
+              <p>Weighted error cost and approval rate across decision cutoffs.</p>
+            </div>
+          </div>
+          <canvas id="thresholdChart" width="900" height="420"></canvas>
         </article>
 
         <aside class="panel side-panel">
@@ -69,6 +99,7 @@
           <div class="artifact-links">
             <a href="/artifacts/metrics/logistic_regression_metrics.json">Metrics JSON</a>
             <a href="/artifacts/metrics/logistic_regression_calibration.csv">Calibration CSV</a>
+            <a href="/artifacts/metrics/logistic_regression_threshold_costs.csv">Threshold Costs CSV</a>
             <a href="/artifacts/figures/logistic_regression_calibration.png">Calibration PNG</a>
           </div>
         </aside>

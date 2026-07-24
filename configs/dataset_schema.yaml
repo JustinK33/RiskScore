@@ -30,6 +30,12 @@ column_aliases:
     - revol_util
     - revolUtil
     - revol_utilization
+  total_credit_utilized:
+    - total_credit_utilized
+    - totalCreditUtilized
+  total_credit_limit:
+    - total_credit_limit
+    - totalCreditLimit
   fico_range_low:
     - fico_range_low
     - ficoRangeLow

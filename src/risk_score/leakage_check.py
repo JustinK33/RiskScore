@@ -42,6 +42,8 @@ ORIGINATION_TIME_COLUMNS: tuple[str, ...] = (
     "pub_rec",
     "revol_bal",
     "revol_util",
+    "total_credit_utilized",
+    "total_credit_limit",
     "total_acc",
 )
 

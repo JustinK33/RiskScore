@@ -1,5 +1,7 @@
 """Calibration analysis stubs for credit default probability models."""
 
+import os
+import tempfile
 from typing import Any
 
 import pandas as pd
@@ -41,6 +43,10 @@ def plot_calibration_curve(
     TODO:
         Add styling conventions for final report charts.
     """
+    os.environ.setdefault(
+        "MPLCONFIGDIR",
+        os.path.join(tempfile.gettempdir(), "risk-score-matplotlib"),
+    )
     import matplotlib
 
     matplotlib.use("Agg", force=True)

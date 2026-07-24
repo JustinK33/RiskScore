@@ -41,6 +41,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 REPORTS_ROOT / "metrics" / "logistic_regression_calibration.csv"
             )
             return
+        if path == "/api/threshold-costs":
+            self._send_csv_file(
+                REPORTS_ROOT / "metrics" / "logistic_regression_threshold_costs.csv"
+            )
+            return
         if path.startswith("/artifacts/"):
             self._send_artifact(path.removeprefix("/artifacts/"))
             return
@@ -62,6 +67,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self._send_json(payload)
 
     def _send_calibration_csv(self, path: Path) -> None:
+        self._send_csv_file(path)
+
+    def _send_csv_file(self, path: Path) -> None:
         if not path.exists():
             self.send_error(404, f"Missing report file: {path.relative_to(PROJECT_ROOT)}")
             return

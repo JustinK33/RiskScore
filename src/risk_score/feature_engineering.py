@@ -30,12 +30,19 @@ def add_credit_utilization_feature(loans: pd.DataFrame) -> pd.DataFrame:
     TODO:
         Decide whether missing utilization should be imputed, flagged, or both.
     """
-    if "revol_util" not in loans.columns:
-        raise KeyError("Expected column `revol_util` is missing.")
-
     result = loans.copy()
-    utilization = _coerce_numeric(result["revol_util"])
-    result["credit_utilization"] = utilization / 100.0
+    if "revol_util" in result.columns:
+        utilization = _coerce_numeric(result["revol_util"]) / 100.0
+    elif {"total_credit_utilized", "total_credit_limit"}.issubset(result.columns):
+        utilized = _coerce_numeric(result["total_credit_utilized"])
+        limit = _coerce_numeric(result["total_credit_limit"])
+        utilization = utilized.div(limit.replace(0, np.nan))
+    else:
+        raise KeyError(
+            "Expected column `revol_util` or both `total_credit_utilized` "
+            "and `total_credit_limit`."
+        )
+    result["credit_utilization"] = utilization
     return result
 
 

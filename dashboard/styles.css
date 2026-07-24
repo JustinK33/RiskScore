@@ -122,6 +122,7 @@ main {
 .panel-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
   gap: 16px;
   margin-top: 16px;
 }
@@ -129,6 +130,10 @@ main {
 .panel {
   min-width: 0;
   padding: 20px;
+}
+
+.chart-panel {
+  grid-column: 1;
 }
 
 .panel-header {
@@ -159,6 +164,11 @@ main {
   display: grid;
   gap: 12px;
   margin: 18px 0;
+}
+
+.side-panel {
+  grid-column: 2;
+  grid-row: 1 / span 2;
 }
 
 .side-panel dl div {
@@ -275,6 +285,11 @@ dd {
   .panel-grid,
   .upload-form {
     grid-template-columns: 1fr;
+  }
+
+  .side-panel {
+    grid-column: auto;
+    grid-row: auto;
   }
 }
 

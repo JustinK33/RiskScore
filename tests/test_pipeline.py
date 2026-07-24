@@ -108,3 +108,51 @@ def test_run_baseline_pipeline_accepts_alternate_lending_club_schema(
 
     assert 0 <= metrics.auc_roc <= 1
     assert (output_dir / "metrics" / "logistic_regression_metrics.json").exists()
+
+
+def test_run_baseline_pipeline_accepts_total_credit_utilization_schema(
+    tmp_path: Path,
+) -> None:
+    """Pipeline should derive utilization when the CSV lacks revolving utilization."""
+    raw_path = tmp_path / "loans.csv"
+    output_dir = tmp_path / "reports"
+    pd.DataFrame(
+        {
+            "loan_status": [
+                "Fully Paid",
+                "Charged Off",
+                "Fully Paid",
+                "Charged Off",
+                "Fully Paid",
+                "Charged Off",
+                "Fully Paid",
+                "Charged Off",
+            ],
+            "issue_month": [
+                "Jan-2016",
+                "Feb-2016",
+                "Mar-2016",
+                "Apr-2016",
+                "Jan-2017",
+                "Feb-2017",
+                "Mar-2017",
+                "Apr-2017",
+            ],
+            "loan_amount": [1000, 4000, 1500, 5000, 1200, 4500, 1700, 5500],
+            "annual_income": [80_000, 35_000, 75_000, 30_000, 82_000, 38_000, 78_000, 32_000],
+            "debt_to_income": [10, 30, 12, 35, 11, 32, 13, 37],
+            "total_credit_utilized": [2_000, 8_000, 2_500, 8_500, 2_200, 8_200, 2_700, 8_700],
+            "total_credit_limit": [10_000] * 8,
+            "grade": ["A", "D", "A", "E", "A", "D", "B", "E"],
+        }
+    ).to_csv(raw_path, index=False)
+
+    metrics = run_baseline_pipeline(
+        raw_path,
+        train_end_date="2016-12-31",
+        test_start_date="2017-01-01",
+        output_dir=output_dir,
+    )
+
+    assert 0 <= metrics.auc_roc <= 1
+    assert (output_dir / "metrics" / "logistic_regression_metrics.json").exists()
