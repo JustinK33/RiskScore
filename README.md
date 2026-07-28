@@ -6,6 +6,8 @@ This project is a portfolio-grade data science and quantitative modeling project
 
 The goal is to build an interpretable, leakage-aware credit risk pipeline that moves from raw loan data through feature engineering, model training, evaluation, calibration, and threshold selection.
 
+![RiskScore dashboard demo](riskscore.gif)
+
 ## Problem Statement
 
 Given borrower and loan information available at origination time, estimate the probability that a loan will default.

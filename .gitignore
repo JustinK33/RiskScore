@@ -46,3 +46,4 @@ mlruns/
 .DS_Store
 .idea/
 .vscode/
+*.md
