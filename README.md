@@ -1,12 +1,13 @@
 # Credit Default Risk Modeling
 
+![RiskScore dashboard demo](riskscore.gif)
+*The local dashboard showing model metrics, calibration plot, and threshold cost analysis.*
+
 ## Project Overview
 
 This project is a portfolio-grade data science and quantitative modeling project focused on predicting credit default risk using the Lending Club loan dataset.
 
 The goal is to build an interpretable, leakage-aware credit risk pipeline that moves from raw loan data through feature engineering, model training, evaluation, calibration, and threshold selection.
-
-![RiskScore dashboard demo](riskscore.gif)
 
 ## Problem Statement
 
