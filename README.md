@@ -2,7 +2,7 @@
 
 An interpretable, leakage-aware machine learning pipeline that predicts the probability a loan will default, using the Lending Club dataset.
 
-![RiskScore dashboard demo](riskscore.gif)
+![RiskScore dashboard demo](riskscore.gif) \\
 *The local dashboard showing model metrics, calibration plot, and threshold cost analysis.*
 
 ## What It Does
