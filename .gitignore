@@ -30,15 +30,21 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
-down.py
+data/sample/*
+!data/sample/.gitkeep
+data/cache/
 
 # Reports and artifacts
+# Generated run output is never committed; only the .gitkeep placeholders are.
 reports/figures/*
 !reports/figures/.gitkeep
 reports/metrics/*
 !reports/metrics/.gitkeep
 reports/models/*
 !reports/models/.gitkeep
+reports/runs/
+reports/registry.json
+reports/active_run.json
 outputs/
 mlruns/
 
@@ -46,4 +52,3 @@ mlruns/
 .DS_Store
 .idea/
 .vscode/
-*.md
