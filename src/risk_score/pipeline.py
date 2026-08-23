@@ -68,9 +68,8 @@ def run_baseline_pipeline(
     loans = load_lending_club_data(
         raw_data_path,
         column_aliases=schema_config.get("column_aliases"),
-        date_column=date_column,
     )
-    loans = create_default_target(loans)
+    loans = loans.assign(default_flag=create_default_target(loans))
     loans = loans.dropna(subset=["default_flag"])
     loans = exclude_leaky_columns(loans)
     loans = select_origination_time_columns(loans)
