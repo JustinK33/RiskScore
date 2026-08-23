@@ -22,7 +22,7 @@ from risk_score.evaluation import (
     select_threshold_by_cost,
 )
 from risk_score.feature_engineering import build_feature_matrix
-from risk_score.leakage_check import exclude_leaky_columns, select_origination_time_columns
+from risk_score.leakage_check import select_model_features
 from risk_score.modeling import (
     time_based_train_test_split,
     train_logistic_regression,
@@ -71,8 +71,7 @@ def run_baseline_pipeline(
     )
     loans = loans.assign(default_flag=create_default_target(loans))
     loans = loans.dropna(subset=["default_flag"])
-    loans = exclude_leaky_columns(loans)
-    loans = select_origination_time_columns(loans)
+    loans, _leakage_audit = select_model_features(loans)
     loans = build_feature_matrix(loans)
 
     target = loans["default_flag"].astype(int)
