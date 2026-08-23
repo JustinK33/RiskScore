@@ -27,13 +27,13 @@ Twelve bare `TODO:` blocks in docstrings were removed during this work: each was
 
 Bugs found in the audit that prompted this work are numbered `B01`-`B32` for correctness issues, `S01`-`S06` for security issues, and `P01`-`P05` for performance issues.
 
-Each ID appears in exactly **two** places:
+Each ID appears in at least **two** places:
 
-1. A `# Fix B12: ...` comment at the code that fixes it.
+1. The code that fixes it - a `# Fix B12: ...` comment at the line, or a `(audit B12)` note in the module docstring where the bug was structural enough that the whole file's shape is the fix.
 2. A test named `test_b12_*` that fails if the fix is reverted.
 
 So `rg B12` shows you the fix and its proof, and nothing else.
-An ID with only a comment and no test means the fix is unproven.
+An ID with only a comment and no test means the fix is unproven; an ID with only a test means the fix is unfindable from the code.
 
 ### Section banners
 

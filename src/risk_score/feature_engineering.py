@@ -183,7 +183,8 @@ def build_credit_utilization(loans: pd.DataFrame) -> pd.Series:
             "credit_utilization needs `revol_util`, or both `total_credit_utilized` "
             f"and `total_credit_limit`. Present: {sorted(loans.columns)[:15]}."
         )
-    # Negative utilization is impossible; large values are real but saturated.
+    # Fix B20: negative utilization is impossible, and the old code applied no
+    # bound at all, so a genuine 8.92 dominated every scaled coefficient.
     return utilization.mask(utilization < 0).clip(upper=MAX_CREDIT_UTILIZATION)
 
 
@@ -196,6 +197,8 @@ def build_loan_to_income_ratio(loans: pd.DataFrame) -> pd.Series:
     """
     loan_amount = coerce_numeric(loans["loan_amnt"])
     annual_income = coerce_numeric(loans["annual_inc"])
+    # Fix B21: the old guard was `.replace(0, np.nan)`, which let a negative
+    # income through as a negative ratio the model read as very low risk.
     return loan_amount.div(annual_income.where(annual_income > 0))
 
 
