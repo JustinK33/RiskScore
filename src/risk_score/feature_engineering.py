@@ -25,12 +25,17 @@ raises, never a branch that changes the output.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 
 import numpy as np
 import pandas as pd
 
-from risk_score.features import ENGINEERED_FEATURES, ParseKind
+from risk_score.features import (
+    COLUMN_REGISTRY,
+    ENGINEERED_FEATURES,
+    EngineeredFeature,
+    ParseKind,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +52,13 @@ MAX_CREDIT_UTILIZATION = 2.0
 #: A dti this large is a sentinel or a units error, not a borrower. The extract's
 #: legitimate range reaches the low hundreds for joint applications.
 MAX_PLAUSIBLE_DTI = 1000.0
+
+#: Utilization above this cannot be a fraction. The real extract's maximum is
+#: 8.92 (892% utilized), so a column reaching 20 is still in percentage units -
+#: which means it was never parsed, or it was parsed twice in opposite
+#: directions. Raising is the only safe answer: clipping would silently record
+#: every such borrower at the ceiling.
+MAX_UTILIZATION_UNITS_ERROR = 20.0
 
 #: Sample size below which distribution-based sanity checks are skipped. A
 #: single-applicant scoring request cannot support them, and firing on one
@@ -153,6 +165,37 @@ def parse_column(series: pd.Series, kind: ParseKind, *, column_name: str = "colu
     )
 
 
+def parse_declared_columns(
+    loans: pd.DataFrame, *, columns: Iterable[str] | None = None
+) -> pd.DataFrame:
+    """Parse every registered column by its declared ``ParseKind``, in one assign.
+
+    This is the *only* place raw values are converted, and it must run exactly
+    once. ``PERCENT`` is not idempotent: applying it twice turns 54.3% into
+    0.00543 with no error, and the derived utilization feature would look
+    plausible while being a hundred times too small. Every builder downstream
+    therefore assumes its inputs have already been through here.
+
+    Date columns are skipped - ``schema.py`` owns them, with one explicit
+    whole-column format - and unregistered columns are left untouched.
+    """
+    names = list(columns) if columns is not None else list(loans.columns)
+    parsed: dict[str, pd.Series] = {}
+    for name in names:
+        spec = COLUMN_REGISTRY.get(name)
+        if spec is None or name not in loans.columns:
+            continue
+        if spec.parse is ParseKind.MONTH_DATE:
+            continue
+        if spec.parse in (ParseKind.CATEGORY, ParseKind.TEXT):
+            # `string` rather than `category`: a fitted category dtype would
+            # carry the training vocabulary, and the encoder owns that.
+            parsed[name] = loans[name].astype("string").str.strip()
+            continue
+        parsed[name] = parse_column(loans[name], spec.parse, column_name=name)
+    return loans.assign(**parsed) if parsed else loans
+
+
 def build_dti_clean(loans: pd.DataFrame) -> pd.Series:
     """Debt-to-income as a float, with sentinels and impossible values removed."""
     dti = coerce_numeric(loans["dti"])
@@ -170,9 +213,26 @@ def build_credit_utilization(loans: pd.DataFrame) -> pd.Series:
     produce a fraction, which the old code's two branches did not: one divided by
     100 and the other did not, so the feature's units depended on which extract
     was loaded.
+
+    ``revol_util`` is expected to arrive **already divided by 100**, because it is
+    declared ``ParseKind.PERCENT`` and :func:`parse_declared_columns` owns that
+    conversion. Dividing here as well would be a second, invisible /100 - which
+    is precisely what happened the first time this ran inside the pipeline, and
+    what :data:`MAX_UTILIZATION_UNITS_ERROR` now catches in the other direction.
     """
     if "revol_util" in loans.columns:
-        utilization = parse_percent(loans["revol_util"], column_name="revol_util")
+        utilization = coerce_numeric(loans["revol_util"])
+        observed = utilization.dropna()
+        if (
+            len(observed) >= MIN_ROWS_FOR_SANITY_CHECK
+            and float(observed.max()) > MAX_UTILIZATION_UNITS_ERROR
+        ):
+            raise ValueError(
+                f"`revol_util` reaches {float(observed.max()):.1f}, which is "
+                f"percentage units, not the fraction this builder expects. Parse "
+                f"the frame with risk_score.feature_engineering.parse_declared_columns "
+                f"(or run it through CanonicalizeFrame) before building features."
+            )
     elif {"total_credit_utilized", "total_credit_limit"}.issubset(loans.columns):
         utilized = coerce_numeric(loans["total_credit_utilized"])
         limit = coerce_numeric(loans["total_credit_limit"])
@@ -277,13 +337,22 @@ if _declared != set(FEATURE_BUILDERS):
     )
 
 
-def build_feature_matrix(loans: pd.DataFrame, *, require_all: bool = False) -> pd.DataFrame:
+def build_feature_matrix(
+    loans: pd.DataFrame,
+    *,
+    require_all: bool = False,
+    features: Sequence[EngineeredFeature] = ENGINEERED_FEATURES,
+) -> pd.DataFrame:
     """Add every buildable derived feature and drop the raw columns they replace.
 
     A feature whose inputs are absent is skipped rather than raising, because the
     two real extracts carry different columns: ``fico_range_*`` exists in neither
     and ``revol_util`` in only one. ``require_all=True`` turns that into an error,
     which is what the training pipeline wants once the extract is known.
+
+    ``features`` narrows the set. The serving path passes the exact list the
+    fitted model was trained on, so a request that happens to carry an extra
+    column cannot produce a feature the model has never seen.
 
     One ``assign`` and one ``drop``, in that order. Building into a dict first
     means a feature can consume a column that a later feature also reads - the
@@ -293,13 +362,13 @@ def build_feature_matrix(loans: pd.DataFrame, *, require_all: bool = False) -> p
     consumed: set[str] = set()
     skipped: list[str] = []
 
-    for feature in ENGINEERED_FEATURES:
+    for feature in features:
         available = set(loans.columns) | set(built)
-        missing = [name for name in feature.requires if name not in available]
-        if missing:
+        unmet = feature.unmet(available)
+        if unmet:
             if require_all:
                 raise KeyError(
-                    f"Cannot build `{feature.name}`: missing {missing}. "
+                    f"Cannot build `{feature.name}`: {unmet}. "
                     f"Present columns: {sorted(loans.columns)[:15]}."
                 )
             skipped.append(feature.name)

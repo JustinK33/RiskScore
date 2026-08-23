@@ -55,7 +55,7 @@ short:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -658,12 +658,42 @@ class EngineeredFeature:
     """A derived feature: what it needs, and what it makes redundant."""
 
     name: str
-    requires: tuple[str, ...]
-    """Canonical columns that must all be present for this feature to be built."""
+    requires: tuple[str, ...] = ()
+    """Canonical columns that must *all* be present for this feature to be built."""
+    requires_any: tuple[tuple[str, ...], ...] = ()
+    """Alternative input groups; at least one group must be fully present.
+
+    This exists because ``credit_utilization`` has two sources: the standard
+    extract carries ``revol_util`` and ``loans_full_schema`` carries
+    ``total_credit_utilized`` / ``total_credit_limit``. Declaring only the first
+    as ``requires`` made the builder's own fallback unreachable - the feature was
+    skipped on the very extract the fallback was written for.
+    """
     consumes: tuple[str, ...] = ()
     """Raw columns dropped once the feature exists, because it replaces them."""
     numeric: bool = True
     description: str = ""
+
+    def satisfied_by(self, available: Collection[str]) -> bool:
+        """Whether every input this feature needs is present."""
+        if not all(name in available for name in self.requires):
+            return False
+        return not self.requires_any or any(
+            all(name in available for name in group) for group in self.requires_any
+        )
+
+    def unmet(self, available: Collection[str]) -> str:
+        """What is missing, phrased for an error message. Empty when buildable."""
+        parts: list[str] = []
+        missing = [name for name in self.requires if name not in available]
+        if missing:
+            parts.append(f"missing {missing}")
+        if self.requires_any and not any(
+            all(name in available for name in group) for group in self.requires_any
+        ):
+            options = " or ".join(str(list(group)) for group in self.requires_any)
+            parts.append(f"needs one of {options}")
+        return "; ".join(parts)
 
 
 #: Derived features, in build order. ``consumes`` is the fix for audit B01:
@@ -679,7 +709,10 @@ ENGINEERED_FEATURES: tuple[EngineeredFeature, ...] = (
     ),
     EngineeredFeature(
         name="credit_utilization",
-        requires=("revol_util",),
+        requires_any=(("revol_util",), ("total_credit_utilized", "total_credit_limit")),
+        # Only revol_util is consumed: it *is* this quantity, rescaled. The
+        # bureau-style balance and limit are kept, because the levels carry
+        # signal the ratio does not.
         consumes=("revol_util",),
         description=(
             "Revolving utilization as a fraction. Falls back to "
@@ -719,3 +752,27 @@ ENGINEERED_FEATURES: tuple[EngineeredFeature, ...] = (
 ENGINEERED_BY_NAME: dict[str, EngineeredFeature] = {
     feature.name: feature for feature in ENGINEERED_FEATURES
 }
+
+
+def resolvable_engineered_features(
+    available: Iterable[str],
+) -> tuple[tuple[EngineeredFeature, ...], tuple[EngineeredFeature, ...]]:
+    """Split the declared features into ``(buildable, blocked)`` for one extract.
+
+    Walked in declared order with each built feature added to what is available,
+    because ``fico_band`` reads the ``fico_midpoint`` built one step earlier.
+
+    Both the training pipeline and :func:`risk_score.transformers.build_feature_spec`
+    call this. Two separate walks would eventually disagree, and the symptom
+    would be a served row with a different feature set from the fitted model.
+    """
+    present = set(available)
+    buildable: list[EngineeredFeature] = []
+    blocked: list[EngineeredFeature] = []
+    for feature in ENGINEERED_FEATURES:
+        if feature.satisfied_by(present):
+            buildable.append(feature)
+            present.add(feature.name)
+        else:
+            blocked.append(feature)
+    return tuple(buildable), tuple(blocked)

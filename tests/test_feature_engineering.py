@@ -8,6 +8,7 @@ import pytest
 
 from risk_score.feature_engineering import (
     MAX_CREDIT_UTILIZATION,
+    MIN_ROWS_FOR_SANITY_CHECK,
     build_credit_history_months,
     build_credit_utilization,
     build_dti_clean,
@@ -16,6 +17,7 @@ from risk_score.feature_engineering import (
     build_loan_to_income_ratio,
     coerce_numeric,
     parse_column,
+    parse_declared_columns,
     parse_employment_years,
     parse_percent,
     parse_term_months,
@@ -127,8 +129,14 @@ def test_build_dti_clean_drops_sentinels_and_impossible_values() -> None:
 
 def test_b20_credit_utilization_is_a_fraction_from_either_source_column() -> None:
     """The old code divided revol_util by 100 and the fallback path by nothing,
-    so the feature's units depended on which extract was loaded."""
-    from_revol_util = build_credit_utilization(pd.DataFrame({"revol_util": ["54.3%"]}))
+    so the feature's units depended on which extract was loaded.
+
+    Both paths take fractions now: `parse_declared_columns` has already applied
+    the declared PERCENT conversion by the time any builder runs.
+    """
+    from_revol_util = build_credit_utilization(
+        parse_declared_columns(pd.DataFrame({"revol_util": ["54.3%"]}))
+    )
     from_totals = build_credit_utilization(
         pd.DataFrame({"total_credit_utilized": [5430.0], "total_credit_limit": [10_000.0]})
     )
@@ -138,13 +146,52 @@ def test_b20_credit_utilization_is_a_fraction_from_either_source_column() -> Non
 
 
 def test_b20_credit_utilization_is_bounded() -> None:
-    loans = pd.DataFrame({"revol_util": ["892%", "-5%", "45%"]})
+    loans = parse_declared_columns(pd.DataFrame({"revol_util": ["892%", "-5%", "45%"]}))
 
     result = build_credit_utilization(loans)
 
     assert result.iloc[0] == MAX_CREDIT_UTILIZATION  # winsorized, not dropped
     assert bool(result.isna().iloc[1])  # negative utilization is impossible
     assert result.iloc[2] == pytest.approx(0.45)
+
+
+def test_b20_utilization_in_percentage_units_raises_instead_of_clipping() -> None:
+    """A frame that skipped `parse_declared_columns` would otherwise be recorded
+    as every borrower sitting exactly on the winsorization ceiling."""
+    unparsed = pd.DataFrame({"revol_util": [54.3] * MIN_ROWS_FOR_SANITY_CHECK})
+
+    with pytest.raises(ValueError, match="percentage units"):
+        build_credit_utilization(unparsed)
+
+
+def test_parse_declared_columns_applies_the_percent_conversion_exactly_once() -> None:
+    """PERCENT is the one non-idempotent kind: a second pass would give 0.00543."""
+    raw = pd.DataFrame({"revol_util": ["54.3%"], "int_rate": ["13.56%"]})
+
+    once = parse_declared_columns(raw)
+    twice = parse_declared_columns(once)
+
+    assert once["revol_util"].iloc[0] == pytest.approx(0.543)
+    assert once["int_rate"].iloc[0] == pytest.approx(0.1356)
+    # Documents the hazard rather than pretending it away: this is why exactly one
+    # caller owns the conversion, and why build_credit_utilization now guards it.
+    assert twice["revol_util"].iloc[0] == pytest.approx(0.00543)
+
+
+def test_parse_declared_columns_leaves_dates_and_unregistered_columns_alone() -> None:
+    raw = pd.DataFrame(
+        {
+            "issue_d": ["Mar-2015"],
+            "term": [" 36 months"],
+            "lender_internal_score": ["7.5"],
+        }
+    )
+
+    result = parse_declared_columns(raw)
+
+    assert result["issue_d"].iloc[0] == "Mar-2015"  # schema.py owns date parsing
+    assert result["term"].iloc[0] == 36.0
+    assert result["lender_internal_score"].iloc[0] == "7.5"
 
 
 def test_credit_utilization_treats_a_zero_limit_as_no_account() -> None:

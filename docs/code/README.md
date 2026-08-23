@@ -25,6 +25,7 @@ Read these in order; each one hands its output to the next.
 | `src/risk_score/data_loading.py` | [data_loading.md](data_loading.md) | Projected reads, the closed-status filter, the outcome-maturity embargo, the label. |
 | `src/risk_score/feature_engineering.py` | [feature_engineering.md](feature_engineering.md) | Declared-kind parsers and the derived features, as pure Series functions. |
 | `src/risk_score/leakage_check.py` | [leakage_check.md](leakage_check.md) | The allow-list audit: what reached the model, and why nothing else did. |
+| `src/risk_score/transformers.py` | [transformers.md](transformers.md) | `FeatureSpec` and the two in-Pipeline steps that enforce it. No dtype inference. |
 
 ## Fixtures
 
