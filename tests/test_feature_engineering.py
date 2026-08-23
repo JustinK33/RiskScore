@@ -77,7 +77,5 @@ def test_build_feature_matrix_allows_missing_fico_columns() -> None:
 
     result = fe.build_feature_matrix(loans)
 
-    assert {"dti_clean", "credit_utilization", "loan_to_income_ratio"}.issubset(
-        result.columns
-    )
+    assert {"dti_clean", "credit_utilization", "loan_to_income_ratio"}.issubset(result.columns)
     assert "fico_band" not in result.columns

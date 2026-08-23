@@ -53,11 +53,13 @@ def time_based_train_test_split(
     train_mask = working["_split_date"] <= train_end
     test_mask = working["_split_date"] >= test_start
 
-    x_train = working.loc[train_mask].sort_values("_split_date").drop(
-        columns=["_split_date", date_column]
+    x_train = (
+        working.loc[train_mask]
+        .sort_values("_split_date")
+        .drop(columns=["_split_date", date_column])
     )
-    x_test = working.loc[test_mask].sort_values("_split_date").drop(
-        columns=["_split_date", date_column]
+    x_test = (
+        working.loc[test_mask].sort_values("_split_date").drop(columns=["_split_date", date_column])
     )
     y_train = target.loc[x_train.index]
     y_test = target.loc[x_test.index]

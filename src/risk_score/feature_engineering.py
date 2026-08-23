@@ -39,8 +39,7 @@ def add_credit_utilization_feature(loans: pd.DataFrame) -> pd.DataFrame:
         utilization = utilized.div(limit.replace(0, np.nan))
     else:
         raise KeyError(
-            "Expected column `revol_util` or both `total_credit_utilized` "
-            "and `total_credit_limit`."
+            "Expected column `revol_util` or both `total_credit_utilized` and `total_credit_limit`."
         )
     result["credit_utilization"] = utilization
     return result

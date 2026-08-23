@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch cancels the first: the only run that matters
+# is the one for the current head.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: Lint and type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e ".[dev]"
+      - name: ruff
+        run: ruff check .
+      - name: ruff format check
+        run: ruff format --check .
+      - name: mypy strict
+        run: mypy src tests
+
+  test:
+    name: Tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Report every failing version rather than stopping at the first.
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # XGBoost's wheel links against libgomp. It is present on ubuntu-latest,
+      # but installing it explicitly means an image change cannot silently turn
+      # every xgboost test into a skip.
+      - name: Install OpenMP runtime
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgomp1
+      - run: python -m pip install -e ".[dev]"
+      - name: Confirm XGBoost actually imports
+        run: python -c "import xgboost; print(xgboost.__version__)"
+      # The floor is a ratchet: it starts just under the measured 85% and is
+      # raised, never lowered, as phases land. A drop below it fails the build.
+      - name: pytest
+        run: pytest -q --cov --cov-report=term-missing --cov-fail-under=80

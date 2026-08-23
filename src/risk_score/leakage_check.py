@@ -131,8 +131,6 @@ def select_origination_time_columns(
 ) -> pd.DataFrame:
     """Keep only documented origination-time fields plus protected columns."""
     selected_columns = [
-        column
-        for column in (*keep_columns, *ORIGINATION_TIME_COLUMNS)
-        if column in loans.columns
+        column for column in (*keep_columns, *ORIGINATION_TIME_COLUMNS) if column in loans.columns
     ]
     return loans.loc[:, selected_columns].copy()

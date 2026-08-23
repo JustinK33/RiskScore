@@ -59,21 +59,26 @@ def test_raw_columns_arrive_in_source_format() -> None:
     assert loans["revol_util"].dropna().iloc[0].endswith("%")
     # e.g. 'Aug-2003' - not ISO, and not parseable without an explicit format.
     assert pd.to_datetime(loans["issue_d"].iloc[0], format="%b-%Y") is not pd.NaT
-    assert loans["emp_length"].dropna().isin(
-        {
-            "< 1 year",
-            "1 year",
-            "2 years",
-            "3 years",
-            "4 years",
-            "5 years",
-            "6 years",
-            "7 years",
-            "8 years",
-            "9 years",
-            "10+ years",
-        }
-    ).all()
+    assert (
+        loans["emp_length"]
+        .dropna()
+        .isin(
+            {
+                "< 1 year",
+                "1 year",
+                "2 years",
+                "3 years",
+                "4 years",
+                "5 years",
+                "6 years",
+                "7 years",
+                "8 years",
+                "9 years",
+                "10+ years",
+            }
+        )
+        .all()
+    )
 
 
 def test_percent_strings_can_be_disabled() -> None:
