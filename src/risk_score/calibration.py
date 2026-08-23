@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -45,7 +46,7 @@ def plot_calibration_curve(
     """
     os.environ.setdefault(
         "MPLCONFIGDIR",
-        os.path.join(tempfile.gettempdir(), "risk-score-matplotlib"),
+        str(Path(tempfile.gettempdir()) / "risk-score-matplotlib"),
     )
     import matplotlib
 

@@ -131,7 +131,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         body = self.rfile.read(content_length).decode("utf-8")
         payload = json.loads(body)
         if not isinstance(payload, dict):
-            raise ValueError("Request body must be a JSON object.")
+            raise TypeError("Request body must be a JSON object.")
         return payload
 
     def _write_upload(self, filename: str, csv_text: str) -> Path:

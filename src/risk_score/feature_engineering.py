@@ -104,5 +104,4 @@ def build_feature_matrix(loans: pd.DataFrame) -> pd.DataFrame:
     elif fico_columns.intersection(result.columns):
         missing = fico_columns.difference(result.columns)
         raise KeyError(f"Missing required FICO columns: {sorted(missing)}")
-    result = add_loan_to_income_ratio(result)
-    return result
+    return add_loan_to_income_ratio(result)
