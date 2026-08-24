@@ -271,9 +271,9 @@ def test_a_failed_run_leaves_nothing_that_could_be_mistaken_for_a_result(
 
 
 def test_publishing_over_an_existing_run_is_refused(tmp_path: Path) -> None:
-    """Run ids embed a second-resolution timestamp, so a collision means two runs
-    of the same model and tier started within one second - which is a bug, not a
-    reason to overwrite a published artifact."""
+    """Run ids embed a millisecond-resolution timestamp, so a collision means two
+    runs of the same model and tier started within one millisecond - which is a
+    bug, not a reason to overwrite a published artifact."""
     (tmp_path / "runs" / "run-c").mkdir(parents=True)
 
     with pytest.raises(FileExistsError, match="run-c"), staged_run(tmp_path, "run-c"):

@@ -41,6 +41,16 @@ Read these in order; each one hands its output to the next.
 | `src/risk_score/evaluation.py` | [evaluation.md](evaluation.md) | The reported metrics, and the cost-sensitive threshold search behind a partition guard. |
 | `src/risk_score/calibration.py` | [calibration.md](calibration.md) | The reliability curve with sample counts, the ECE, and the correction that is now actually applied. |
 
+## Artifacts and orchestration
+
+| File | Page | One line |
+| --- | --- | --- |
+| `src/risk_score/artifacts.py` | [artifacts.md](artifacts.md) | The `ScoringBundle`, atomic run directories, the registry, and the active pointer. |
+| `src/risk_score/pipeline.py` | [pipeline.md](pipeline.md) | The sequence, and nothing else. Where the four hardest bugs lived. |
+| `src/risk_score/cache.py` | [cache.md](cache.md) | The canonicalized extract as content-addressed parquet. Every failure falls back to the CSV. |
+| `src/risk_score/logging_setup.py` | [logging_setup.md](logging_setup.md) | One `dictConfig`, UTC timestamps, and run/request ids in contextvars. |
+| `src/risk_score/cli.py` | [cli.md](cli.md) | The `riskscore` commands. Tracebacks propagate; exit codes distinguish a typo from a bug. |
+
 ## Fixtures
 
 | File | Page | One line |

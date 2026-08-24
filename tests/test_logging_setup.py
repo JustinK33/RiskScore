@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -212,6 +214,37 @@ def test_logs_go_to_stderr_so_piped_stdout_stays_clean(
     captured = capsys.readouterr()
     assert "hello" in captured.err
     assert captured.out == ""
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_both_formats_timestamp_in_utc(
+    json_output: bool, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run ids, manifests and the embargo snapshot are all UTC.
+
+    A log line stamped in local time would make correlating a line to the run
+    that emitted it offset arithmetic, and the offset changes silently between a
+    laptop and a container where `TZ` is unset. Pinned by comparing against a UTC
+    clock read either side of the call rather than against a fixed string, since
+    there is no way to assert "this is UTC" from the text alone.
+    """
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    before = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M")
+
+    with isolated_root():
+        configure_logging(json_output=json_output)
+        logging.getLogger("risk_score.test").info("stamped")
+
+    after = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M")
+    line = capsys.readouterr().err
+    stamp = json.loads(line)["timestamp"] if json_output else line.split()[0]
+
+    assert stamp.startswith((before, after))
+    # Milliseconds and an explicit `Z`, so the format is unambiguous to a reader
+    # and sorts lexically like the run ids it sits next to.
+    assert stamp.endswith("Z")
+    assert stamp[-5] == "."
 
 
 def test_the_noisy_libraries_are_pinned_to_warning() -> None:

@@ -414,8 +414,8 @@ def staged_run(root: str | Path, run_id: str) -> Iterator[Path]:
     if destination.exists():
         raise FileExistsError(
             f"Run {run_id} already exists at {destination}. Run ids embed a "
-            "second-resolution timestamp, so this means two runs of the same "
-            "model and tier started within one second."
+            "millisecond-resolution timestamp, so this means two runs of the "
+            "same model and tier started within one millisecond."
         )
     # A uuid rather than the run id, so two concurrent runs cannot collide on
     # the scratch directory either.

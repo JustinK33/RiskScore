@@ -36,6 +36,7 @@ import json
 import logging
 import logging.config
 import os
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -90,7 +91,22 @@ class ContextFilter(logging.Filter):
         return True
 
 
-class JsonFormatter(logging.Formatter):
+class UtcFormatter(logging.Formatter):
+    """A formatter whose clock is UTC, spelled with a ``Z``.
+
+    Not a stylistic preference. Run ids, manifest timestamps, and the embargo
+    snapshot are all UTC, so a log line stamped in local time makes correlating
+    a line to the run that emitted it an exercise in offset arithmetic - and the
+    offset changes silently between a laptop and a container, where ``TZ`` is
+    usually unset. One clock, one spelling, everywhere.
+    """
+
+    converter = staticmethod(time.gmtime)
+    default_time_format = "%Y-%m-%dT%H:%M:%S"
+    default_msec_format = "%s.%03dZ"
+
+
+class JsonFormatter(UtcFormatter):
     """One JSON object per line, with the context ids and any ``extra`` fields.
 
     ``default=str`` on the dump is deliberate: a log call is not the place to
@@ -100,7 +116,11 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            # No `datefmt`, so `default_time_format` and `default_msec_format`
+            # apply and the milliseconds survive. A `datefmt` argument would
+            # replace both, and `%z` under a `gmtime` converter renders an empty
+            # offset rather than `+0000`.
+            "timestamp": self.formatTime(record),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -153,7 +173,7 @@ def configure_logging(
             "disable_existing_loggers": False,
             "filters": {"context": {"()": ContextFilter}},
             "formatters": {
-                "human": {"format": _HUMAN_FORMAT, "datefmt": "%Y-%m-%d %H:%M:%S"},
+                "human": {"()": UtcFormatter, "format": _HUMAN_FORMAT},
                 "json": {"()": JsonFormatter},
             },
             "handlers": {
