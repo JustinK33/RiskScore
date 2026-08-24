@@ -835,7 +835,47 @@ def test_docs_can_be_switched_off(api_settings: Settings) -> None:
         assert client.get("/openapi.json").status_code == 404
 
 
-# --- 8. settings ---------------------------------------------------------------
+# --- 8. the mounted dashboard ---------------------------------------------------
+
+
+def test_the_dashboard_is_served_at_the_root(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<title>" in response.text
+
+
+def test_the_dashboard_does_not_shadow_the_api(client: TestClient) -> None:
+    """The mount is at ``/``, so it matches anything no route claimed first.
+
+    Starlette resolves routes in order, so mounting before the routers would turn
+    every endpoint into a 404 from the filesystem. This is the assertion that the
+    mount goes last, and a 404 from an unknown path is what proves the mount is
+    actually there to be shadowed.
+    """
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/api/metrics").status_code == 200
+    assert client.get("/no-such-page").status_code == 404
+
+
+def test_a_missing_dashboard_leaves_the_api_working(trained_run: RunResult, tmp_path: Path) -> None:
+    """A container shipping the API only must still boot.
+
+    An operator who removed the dashboard wanted a scoring service, not a startup
+    error naming a directory they deleted on purpose.
+    """
+    settings = Settings(
+        reports_dir=trained_run.run_dir.parent.parent,
+        dashboard_dir=tmp_path / "absent",
+        log_level="WARNING",
+    )
+    with TestClient(create_app(settings), raise_server_exceptions=False) as local:
+        assert local.get("/healthz").status_code == 200
+        assert local.get("/").status_code == 404
+
+
+# --- 9. settings ---------------------------------------------------------------
 
 
 def test_public_bind_is_refused_without_the_flag() -> None:

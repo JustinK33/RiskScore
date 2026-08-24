@@ -39,6 +39,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.staticfiles import StaticFiles
 
 from risk_score.api.reports import clear_cache as clear_report_cache
 from risk_score.api.routes_admin import build_runner
@@ -354,6 +355,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _install_openapi(app)
     app.include_router(public_router)
     app.include_router(admin_router)
+    _mount_dashboard(app, settings)
 
     _log.info(
         "serving on %s:%d (docs %s, mutating routes: %s)",
@@ -365,6 +367,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.bind_is_public:
         _log.warning("bound to %s, which is reachable off this host", settings.host)
     return app
+
+
+def _mount_dashboard(app: FastAPI, settings: Settings) -> None:
+    """Serve the static dashboard at ``/``, if there is one.
+
+    Mounted *after* every router, because a mount at ``/`` matches any path an
+    earlier route did not - Starlette resolves routes in order, so mounting first
+    would shadow ``/predict`` with a 404 from the filesystem.
+
+    ``html=True`` serves ``index.html`` for the bare path. Skipped rather than
+    failed when the directory is absent, which is the case in a container that
+    ships the API only: an operator who deleted the dashboard wanted a scoring
+    service, not a startup error.
+
+    One server, not two. The dashboard reading a different process's ``reports/``
+    is how a page ends up showing metrics from a run the scoring service is not
+    using.
+    """
+    directory = settings.dashboard_dir
+    if not directory.is_dir():
+        _log.info("no dashboard at %s/; serving the API only", directory)
+        return
+    app.mount("/", StaticFiles(directory=directory, html=True), name="dashboard")
+    _log.info("dashboard mounted at / from %s/", directory)
 
 
 def _install_handlers(app: FastAPI) -> None:

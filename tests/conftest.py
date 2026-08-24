@@ -24,6 +24,12 @@ from risk_score.sample_data import make_synthetic_loans
 # large enough that a tri-split still leaves positives in every partition.
 SMALL_ROWS = 900
 
+#: The real dashboard, located from this file rather than from the working
+#: directory. ``Settings.dashboard_dir`` defaults to a relative path, so a suite
+#: that let it default would mount the dashboard when run from the repo root and
+#: not when run from anywhere else - a difference nobody would look for.
+DASHBOARD_DIR = Path(__file__).resolve().parent.parent / "dashboard"
+
 
 def _xgboost_loads() -> bool:
     """Whether XGBoost can actually be used, not merely whether it is installed.
@@ -97,6 +103,7 @@ def api_settings(trained_run: RunResult) -> Settings:
     """
     return Settings(
         reports_dir=trained_run.run_dir.parent.parent,
+        dashboard_dir=DASHBOARD_DIR,
         log_level="WARNING",
     )
 
