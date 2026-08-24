@@ -1,67 +1,473 @@
-"""Tests for train/test splitting and baseline modeling."""
+"""Tests for the time partition and the assembled model pipeline.
 
+The split tests use hand-built frames with two columns, because
+:func:`split_by_time` reads exactly one of them. The preprocessor and pipeline
+tests use the synthetic raw extract, because their whole claim is about how a
+*raw* frame is routed.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import pytest
+from scipy import sparse
+from sklearn.preprocessing import FunctionTransformer
 
-from risk_score.modeling import time_based_train_test_split, train_logistic_regression
+from risk_score.modeling import (
+    DEFAULT_LOGISTIC_PARAMS,
+    TimeWindow,
+    build_model_pipeline,
+    build_preprocessor,
+    split_by_time,
+    train_logistic_regression,
+)
+from risk_score.transformers import FeatureSpec, build_feature_spec
+
+TRAIN = ("2013-01", "2014-12")
+VALIDATION = ("2015-01", "2015-06")
+TEST = ("2015-07", "2015-12")
 
 
-def test_time_based_split_uses_chronological_holdout() -> None:
-    """Rows before the cutoff should train and rows after it should test."""
-    features = pd.DataFrame(
+def _dense(matrix: Any) -> npt.NDArray[np.float64]:
+    """The transformed matrix as an array, whichever layout it came back in.
+
+    ``ColumnTransformer`` stacks to CSR only when the combined density is low
+    enough, and on four rows it is not - so a test that asserts values has to
+    handle both, and a test that asserts *layout* is asserting the size of its
+    own fixture.
+    """
+    if sparse.issparse(matrix):
+        return np.asarray(matrix.toarray(), dtype=np.float64)
+    return np.asarray(matrix, dtype=np.float64)
+
+
+def dated(months: list[str | None], values: list[int] | None = None) -> pd.DataFrame:
+    """A two-column frame: the date the split reads, and a value to trace."""
+    return pd.DataFrame(
         {
-            "issue_d": ["2016-01-01", "2016-06-01", "2017-01-01", "2017-06-01"],
-            "loan_amnt": [1000, 2000, 3000, 4000],
+            "issue_d": pd.to_datetime(months),
+            "loan_amnt": values if values is not None else list(range(len(months))),
         }
+    )
+
+
+# --- TimeWindow ----------------------------------------------------------------
+
+
+def test_a_window_end_covers_the_whole_month_it_names() -> None:
+    """`2014-09` must mean through 30 September, not 1 September.
+
+    Asserted by containment rather than by comparing ``end`` to a literal
+    timestamp: the last instant of a period is a pandas resolution detail
+    (microseconds today, nanoseconds before), and the contract is the boundary.
+    """
+    window = TimeWindow.parse("train", ("2013-01", "2014-09"))
+    dates = pd.to_datetime(
+        [
+            "2012-12-31 00:00:00",
+            "2013-01-01 00:00:00",
+            "2014-09-01 00:00:00",
+            "2014-09-30 23:00:00",
+            "2014-10-01 00:00:00",
+        ]
+    )
+
+    assert window.start == pd.Timestamp("2013-01-01")
+    assert window.mask(pd.Series(dates)).tolist() == [False, True, True, True, False]
+    assert window.label() == "2013-01-01..2014-09-30"
+
+
+def test_a_window_end_covers_the_whole_year_it_names() -> None:
+    window = TimeWindow.parse("train", ("2013", "2014"))
+    dates = pd.Series(pd.to_datetime(["2014-12-31 18:00:00", "2015-01-01 00:00:00"]))
+    assert window.mask(dates).tolist() == [True, False]
+    assert window.label() == "2013-01-01..2014-12-31"
+
+
+def test_a_full_date_is_inclusive_of_the_day_it_names() -> None:
+    """A window ending 2015-12-31 must contain a loan issued on 2015-12-31."""
+    window = TimeWindow.parse("test", ("2015-04-01", "2015-12-31"))
+    dates = pd.Series(
+        pd.to_datetime(["2015-12-31 00:00:00", "2015-12-31 23:00:00", "2016-01-01 00:00:00"])
+    )
+    assert window.mask(dates).tolist() == [True, True, False]
+
+
+def test_a_window_ending_before_it_starts_is_rejected() -> None:
+    with pytest.raises(ValueError, match="starts at"):
+        TimeWindow.parse("train", ("2015-01", "2014-01"))
+
+
+def test_a_window_needs_exactly_two_bounds() -> None:
+    with pytest.raises(ValueError, match="exactly \\(start, end\\)"):
+        TimeWindow.parse("train", ("2013-01", "2014-01", "2015-01"))
+
+
+def test_a_window_never_contains_a_missing_date() -> None:
+    dates = pd.Series(pd.to_datetime(["2014-06-01", None]))
+    assert TimeWindow.parse("train", ("2013-01", "2014-12")).mask(dates).tolist() == [True, False]
+
+
+# --- split_by_time -------------------------------------------------------------
+
+
+def test_rows_land_in_the_window_that_contains_their_issue_date() -> None:
+    features = dated(
+        ["2013-05-01", "2014-12-31", "2015-01-01", "2015-06-30", "2015-07-01", "2015-12-01"],
+        [10, 20, 30, 40, 50, 60],
+    )
+    target = pd.Series([0, 1, 0, 1, 0, 1])
+
+    split = split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+    assert split.x_train["loan_amnt"].tolist() == [10, 20]
+    assert split.x_validation["loan_amnt"].tolist() == [30, 40]
+    assert split.x_test["loan_amnt"].tolist() == [50, 60]
+    assert split.y_train.tolist() == [0, 1]
+    assert split.y_test.tolist() == [0, 1]
+
+
+def test_partitions_come_back_in_date_order_whatever_the_input_order() -> None:
+    features = dated(
+        ["2014-12-01", "2013-01-01", "2014-06-01", "2015-02-01", "2015-08-01"],
+        [3, 1, 2, 4, 5],
+    )
+    target = pd.Series([0, 0, 1, 0, 1])
+
+    split = split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+    assert split.x_train["loan_amnt"].tolist() == [1, 2, 3]
+    assert split.y_train.tolist() == [0, 1, 0]
+
+
+def test_the_date_column_survives_the_split() -> None:
+    """It is the input to credit_history_months; the spec is what hides it."""
+    split = split_by_time(
+        dated(["2013-05-01", "2015-02-01", "2015-08-01"]),
+        pd.Series([0, 1, 0]),
+        train=TRAIN,
+        validation=VALIDATION,
+        test=TEST,
+    )
+    assert "issue_d" in split.x_train.columns
+    assert split.x_train["issue_d"].tolist() == [pd.Timestamp("2013-05-01")]
+
+
+def test_b09_rows_falling_between_windows_are_counted_not_silently_dropped() -> None:
+    """A gap row is a legitimate exclusion; an unreported one is a lie about n."""
+    features = dated(
+        # The middle row is inside no window: train ends 2014-12, validation
+        # starts 2015-01, so 2014-12-15 is in train - use a real gap instead.
+        ["2013-05-01", "2016-03-01", "2015-02-01", "2015-08-01"],
     )
     target = pd.Series([0, 1, 0, 1])
 
-    split = time_based_train_test_split(
-        features,
-        target,
-        date_column="issue_d",
-        train_end_date="2016-12-31",
-        test_start_date="2017-01-01",
-    )
+    split = split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
 
-    assert split.x_train["loan_amnt"].tolist() == [1000, 2000]
-    assert split.x_test["loan_amnt"].tolist() == [3000, 4000]
-    assert "issue_d" not in split.x_train.columns
+    assert split.rows_in == 4
+    assert split.rows_out == 3
+    assert split.rows_outside_windows == 1
+    assert split.rows_unparseable_date == 0
+    assert "dropped_gap=1" in split.summary()
 
 
-def test_time_based_split_error_includes_available_date_range() -> None:
-    """Invalid split windows should explain the observed date coverage."""
+def test_b09_an_unparseable_date_is_quarantined_rather_than_aborting_the_run() -> None:
+    features = dated(["2013-05-01", None, "2015-02-01", "2015-08-01"])
+    target = pd.Series([0, 1, 0, 1])
+
+    split = split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+    assert split.rows_unparseable_date == 1
+    assert split.rows_out == 3
+    assert "dropped_bad_date=1" in split.summary()
+
+
+def test_b08_an_empty_partition_reports_the_observed_date_range() -> None:
+    features = dated(["2018-01-01", "2018-02-01", "2018-03-01"])
+    target = pd.Series([0, 1, 0])
+
+    with pytest.raises(ValueError, match="data covers 2018-01-01 to 2018-03-01"):
+        split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+
+def test_b08_an_all_missing_date_column_explains_itself_instead_of_crashing() -> None:
+    """`NaT.date()` raises, so the old handler died inside its own error message."""
+    features = dated([None, None, None])
+    target = pd.Series([0, 1, 0])
+
+    with pytest.raises(ValueError, match="no parseable dates at all"):
+        split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+
+def test_the_empty_partition_error_names_which_partitions_were_empty() -> None:
+    features = dated(["2013-05-01", "2014-06-01"])
+    target = pd.Series([0, 1])
+
+    with pytest.raises(ValueError, match="\\['validation', 'test'\\]"):
+        split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+
+def test_overlapping_windows_are_rejected() -> None:
+    """Overlap is the one split error that improves every metric instead of raising."""
+    features = dated(["2013-05-01", "2015-02-01", "2015-08-01"])
+    target = pd.Series([0, 1, 0])
+
+    with pytest.raises(ValueError, match="Overlapping"):
+        split_by_time(
+            features,
+            target,
+            train=("2013-01", "2015-03"),
+            validation=VALIDATION,
+            test=TEST,
+        )
+
+
+def test_b32_a_column_named_split_date_is_left_alone() -> None:
+    """The old implementation assigned and then dropped a `_split_date` helper."""
+    features = dated(["2013-05-01", "2015-02-01", "2015-08-01"]).assign(_split_date=[7, 8, 9])
+    target = pd.Series([0, 1, 0])
+
+    split = split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+    assert split.x_train["_split_date"].tolist() == [7]
+
+
+def test_a_missing_date_column_is_named() -> None:
+    with pytest.raises(KeyError, match="issue_d"):
+        split_by_time(
+            pd.DataFrame({"loan_amnt": [1, 2]}),
+            pd.Series([0, 1]),
+            train=TRAIN,
+            validation=VALIDATION,
+            test=TEST,
+        )
+
+
+def test_an_unparsed_date_column_is_refused_rather_than_reparsed_here() -> None:
+    features = pd.DataFrame({"issue_d": ["Mar-2015", "Apr-2015"], "loan_amnt": [1, 2]})
+    with pytest.raises(TypeError, match="must already be datetime"):
+        split_by_time(features, pd.Series([0, 1]), train=TRAIN, validation=VALIDATION, test=TEST)
+
+
+def test_a_target_with_a_different_index_is_refused() -> None:
+    features = dated(["2013-05-01", "2015-02-01", "2015-08-01"])
+    target = pd.Series([0, 1, 0], index=[10, 11, 12])
+
+    with pytest.raises(ValueError, match="share an index"):
+        split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+
+def test_a_target_of_the_wrong_length_is_refused() -> None:
+    with pytest.raises(ValueError, match="same length"):
+        split_by_time(
+            dated(["2013-05-01", "2015-02-01"]),
+            pd.Series([0]),
+            train=TRAIN,
+            validation=VALIDATION,
+            test=TEST,
+        )
+
+
+def test_tz_aware_issue_dates_are_split_by_the_same_windows() -> None:
     features = pd.DataFrame(
         {
-            "issue_d": ["2018-01-01", "2018-02-01", "2018-03-01"],
-            "loan_amnt": [1000, 2000, 3000],
+            "issue_d": pd.to_datetime(["2013-05-01", "2015-02-01", "2015-08-01"], utc=True),
+            "loan_amnt": [1, 2, 3],
         }
     )
     target = pd.Series([0, 1, 0])
 
-    with pytest.raises(ValueError, match="Available date range is 2018-01-01 to 2018-03-01"):
-        time_based_train_test_split(
-            features,
-            target,
-            date_column="issue_d",
-            train_end_date="2016-12-31",
-            test_start_date="2017-01-01",
-        )
+    split = split_by_time(features, target, train=TRAIN, validation=VALIDATION, test=TEST)
+
+    assert split.x_train["loan_amnt"].tolist() == [1]
+    assert split.x_test["loan_amnt"].tolist() == [3]
 
 
-def test_train_logistic_regression_returns_probability_model() -> None:
-    """The baseline pipeline should fit and produce default probabilities."""
-    x_train = pd.DataFrame(
+# --- build_preprocessor --------------------------------------------------------
+
+
+@pytest.fixture
+def tiny_spec() -> FeatureSpec:
+    """Four numerics and one categorical, so the output width is countable."""
+    return build_feature_spec(["loan_amnt", "term", "annual_inc", "issue_d", "purpose"])
+
+
+@pytest.fixture
+def tiny_frame() -> pd.DataFrame:
+    return pd.DataFrame(
         {
-            "loan_amnt": [1000, 2000, 3000, 4000, 5000, 6000],
-            "annual_inc": [80_000, 70_000, 60_000, 50_000, 40_000, 30_000],
-            "grade": ["A", "A", "B", "C", "D", "E"],
+            "loan_amnt": [10_000.0, 20_000.0, 10_000.0, 20_000.0],
+            "term": [" 36 months"] * 4,
+            "annual_inc": [50_000.0, 50_000.0, 100_000.0, 100_000.0],
+            "issue_d": ["Mar-2015"] * 4,
+            "purpose": ["car", "car", "credit_card", "credit_card"],
         }
     )
-    y_train = pd.Series([0, 0, 0, 1, 1, 1])
 
-    model = train_logistic_regression(x_train, y_train)
-    probabilities = model.predict_proba(x_train)[:, 1]
 
-    assert probabilities.shape == (6,)
-    assert ((probabilities >= 0) & (probabilities <= 1)).all()
+def test_the_preprocessor_transforms_exactly_the_declared_columns(tiny_spec: FeatureSpec) -> None:
+    preprocessor = build_preprocessor(tiny_spec)
+    names = {name: columns for name, _, columns in preprocessor.transformers}
+    assert names["numeric"] == list(tiny_spec.numeric_features)
+    assert names["categorical"] == list(tiny_spec.categorical_features)
+    assert preprocessor.remainder == "drop"
+
+
+def test_b22_the_one_hot_block_is_sparse_and_the_width_is_the_declared_one(
+    tiny_spec: FeatureSpec, tiny_frame: pd.DataFrame
+) -> None:
+    """Dense one-hot output over 1.8M rows was the other half of the 35 GB defect."""
+    pipeline = build_model_pipeline(tiny_spec, FunctionTransformer())
+    matrix = pipeline.fit_transform(tiny_frame)
+    encoder = pipeline.named_steps["preprocess"].named_transformers_["categorical"]
+
+    assert encoder.sparse_output is True
+    # 4 numerics, no missing values so no indicators, plus one column per purpose.
+    assert matrix.shape == (4, 6)
+    assert pipeline.named_steps["preprocess"].get_feature_names_out().tolist() == [
+        "loan_amnt",
+        "term",
+        "annual_inc",
+        "loan_to_income_ratio",
+        "purpose_car",
+        "purpose_credit_card",
+    ]
+
+
+def test_numeric_features_are_standardized_to_exact_values(
+    tiny_spec: FeatureSpec, tiny_frame: pd.DataFrame
+) -> None:
+    """loan_amnt is 10k/20k/10k/20k, so mean 15k and population sd 5k."""
+    pipeline = build_model_pipeline(tiny_spec, FunctionTransformer())
+    matrix = _dense(pipeline.fit_transform(tiny_frame))
+    assert matrix[:, 0].tolist() == [-1.0, 1.0, -1.0, 1.0]
+
+
+def test_a_constant_column_becomes_zero_rather_than_nan(
+    tiny_spec: FeatureSpec, tiny_frame: pd.DataFrame
+) -> None:
+    """`term` is 36 for every row: sd 0, which a naive scaler turns into NaN."""
+    pipeline = build_model_pipeline(tiny_spec, FunctionTransformer())
+    matrix = _dense(pipeline.fit_transform(tiny_frame))
+    assert matrix[:, 1].tolist() == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_an_entirely_missing_numeric_column_keeps_its_place_in_the_matrix() -> None:
+    """keep_empty_features: without it the width stops matching the spec at serve time."""
+    spec = build_feature_spec(["loan_amnt", "term", "annual_inc", "issue_d", "dti"])
+    frame = pd.DataFrame(
+        {
+            "loan_amnt": [10_000.0, 20_000.0],
+            "term": [" 36 months"] * 2,
+            "annual_inc": [50_000.0, 100_000.0],
+            "issue_d": ["Mar-2015"] * 2,
+            "dti": [np.nan, np.nan],
+        }
+    )
+    pipeline = build_model_pipeline(spec, FunctionTransformer())
+    matrix = _dense(pipeline.fit_transform(frame))
+    names = pipeline.named_steps["preprocess"].get_feature_names_out().tolist()
+
+    # The column still exists, which is the whole point: the design matrix keeps
+    # the width the spec declares, so a serving request cannot be a column short.
+    assert "dti_clean" in names
+    assert matrix[:, names.index("dti_clean")].tolist() == [0.0, 0.0]
+
+
+def test_a_partly_missing_numeric_column_gets_a_missingness_indicator() -> None:
+    """Missing income data is informative, so the fact of it is a feature."""
+    spec = build_feature_spec(["loan_amnt", "term", "annual_inc", "issue_d", "dti"])
+    frame = pd.DataFrame(
+        {
+            "loan_amnt": [10_000.0, 20_000.0, 30_000.0, 40_000.0],
+            "term": [" 36 months"] * 4,
+            "annual_inc": [50_000.0, 100_000.0, 60_000.0, 90_000.0],
+            "issue_d": ["Mar-2015"] * 4,
+            "dti": [10.0, 20.0, np.nan, 30.0],
+        }
+    )
+    pipeline = build_model_pipeline(spec, FunctionTransformer())
+    matrix = _dense(pipeline.fit_transform(frame))
+    names = pipeline.named_steps["preprocess"].get_feature_names_out().tolist()
+
+    # Raw indicator is [0, 0, 1, 0]; the scaler standardizes it like any other
+    # numeric column, so mean 0.25 and population sd sqrt(0.1875).
+    indicator = matrix[:, names.index("missingindicator_dti_clean")]
+    assert indicator.tolist() == pytest.approx(
+        [-0.5773502692, -0.5773502692, 1.7320508076, -0.5773502692]
+    )
+    # The imputed value is the median of the three observed rows.
+    assert matrix[2, names.index("dti_clean")] == pytest.approx(matrix[1, names.index("dti_clean")])
+
+
+def test_an_unseen_category_does_not_break_a_served_row(
+    tiny_spec: FeatureSpec, tiny_frame: pd.DataFrame
+) -> None:
+    pipeline = build_model_pipeline(tiny_spec, FunctionTransformer())
+    pipeline.fit(tiny_frame)
+    served = pipeline.transform(tiny_frame.head(1).assign(purpose=["renewable_energy"]))
+
+    assert served.shape == (1, 6)
+    # Unknown, so neither known level fires.
+    assert _dense(served)[0, 4:].tolist() == [0.0, 0.0]
+
+
+def test_a_spec_with_only_categoricals_still_builds_a_preprocessor() -> None:
+    spec = FeatureSpec(
+        raw_inputs=("purpose",),
+        required_raw_inputs=(),
+        engineered=(),
+        numeric_features=(),
+        categorical_features=("purpose",),
+    )
+    assert [name for name, _, _ in build_preprocessor(spec).transformers] == ["categorical"]
+
+
+# --- the assembled pipeline ----------------------------------------------------
+
+
+def test_the_fitted_pipeline_scores_a_raw_frame_end_to_end(raw_loans: pd.DataFrame) -> None:
+    spec = build_feature_spec(raw_loans.columns)
+    target = pd.Series(
+        (raw_loans["loan_status"] == "Charged Off").astype(int), index=raw_loans.index
+    )
+
+    model = train_logistic_regression(raw_loans, target, spec=spec)
+    probabilities = model.predict_proba(raw_loans)[:, 1]
+
+    assert probabilities.min() > 0.0
+    assert probabilities.max() < 1.0
+    assert model.named_steps["preprocess"].get_feature_names_out().size > len(spec.model_features)
+
+
+def test_one_row_scores_identically_alone_and_in_the_batch(raw_loans: pd.DataFrame) -> None:
+    """The serving guarantee, all the way through the estimator."""
+    spec = build_feature_spec(raw_loans.columns)
+    target = pd.Series(
+        (raw_loans["loan_status"] == "Charged Off").astype(int), index=raw_loans.index
+    )
+    model = train_logistic_regression(raw_loans, target, spec=spec)
+
+    batch = model.predict_proba(raw_loans)[:, 1]
+    single = model.predict_proba(raw_loans.iloc[[11]])[:, 1]
+
+    assert single[0] == pytest.approx(batch[11], rel=1e-12)
+
+
+def test_b05_the_logistic_baseline_is_not_class_weighted() -> None:
+    """`class_weight='balanced'` inflates every probability, which is what the
+    Brier score and the calibration curve are supposed to be measuring."""
+    assert DEFAULT_LOGISTIC_PARAMS["class_weight"] is None
+
+
+def test_a_caller_can_override_a_model_parameter(raw_loans: pd.DataFrame) -> None:
+    spec = build_feature_spec(raw_loans.columns)
+    target = pd.Series(
+        (raw_loans["loan_status"] == "Charged Off").astype(int), index=raw_loans.index
+    )
+    model = train_logistic_regression(raw_loans, target, spec=spec, config={"C": 0.25})
+    assert model.named_steps["classifier"].C == 0.25

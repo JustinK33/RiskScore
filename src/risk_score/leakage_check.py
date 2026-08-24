@@ -142,9 +142,11 @@ def select_model_features(
     One allow-list pass, replacing the old deny-then-allow pair where the first
     pass dropped columns the second was about to drop anyway (audit B26).
 
-    ``issue_d`` is kept by default because the time-based split needs it; the
-    split drops it before the model sees it, and
-    :func:`audit_columns` does not count it as a feature.
+    ``issue_d`` is kept by default because the time-based split needs it, and
+    :func:`audit_columns` does not count it as a feature. It stays in the frame
+    all the way into the fitted ``Pipeline`` - ``credit_history_months`` is
+    derived from it - and what keeps it away from the estimator is that
+    :class:`~risk_score.transformers.FeatureSpec` does not declare it as one.
 
     ``strict=True`` raises on an unclassified column instead of dropping it.
     That is the training pipeline's setting: onboarding a new extract should be a
