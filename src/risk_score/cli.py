@@ -19,9 +19,12 @@ Three deliberate choices about how it behaves when things go wrong:
   under ``data/cache`` is expected; a library function doing it unasked is not.
   ``--no-cache`` turns it off, and ``--cache-dir`` moves it.
 
-``serve`` and ``bench`` are not here yet - they arrive with the modules that back
-them. A subcommand that exists and fails is worse than one that does not exist,
-because ``--help`` stops being the answer to what this tool can do.
+``serve`` and ``bench`` import :mod:`risk_score.api` **inside their handlers**,
+not at the top of this file. fastapi, uvicorn and pydantic-settings are the
+``[serve]`` extra, so a training box that installed ``[train]`` only has none of
+them - and a module-level import would make ``riskscore train`` fail on a missing
+web framework it does not use. Everything else here imports normally, because the
+training dependencies are the base install.
 """
 
 from __future__ import annotations
@@ -132,6 +135,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_card(subparsers)
     _add_runs(subparsers)
     _add_activate(subparsers)
+    _add_serve(subparsers)
+    _add_bench(subparsers)
     _add_make_sample_data(subparsers)
     return parser
 
@@ -577,6 +582,135 @@ def _activate(args: argparse.Namespace) -> int:
     set_active_run(args.output_dir, args.run_id)
     identity = f"{bundle.metadata.model_type}, {bundle.metadata.feature_tier}"
     print(f"active run {args.run_id} ({identity})")
+    return 0
+
+
+#: What ``bench --calls``/``--warmup`` default to. Spelled here so ``--help``
+#: states the number rather than "the library default", and kept in step with
+#: :mod:`risk_score.api.bench` by ``test_bench_defaults_match_the_library`` - the
+#: module cannot be imported at the top of this file, see the module docstring.
+BENCH_CALLS = 2000
+BENCH_WARMUP = 25
+
+
+def _add_serve(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser(
+        "serve",
+        help="run the scoring API and the dashboard",
+        description=(
+            "Loads the active run and serves POST /predict, the report endpoints, "
+            "and the dashboard from one process. Binds 127.0.0.1 unless "
+            "RISKSCORE_ALLOW_PUBLIC_BIND=1 is set as well, so reaching the network "
+            "takes two deliberate decisions. Everything not on this command line "
+            "is read from RISKSCORE_* environment variables and .env - run with "
+            "--verbose to see the resolved configuration logged at startup."
+        ),
+    )
+    # `None` rather than the Settings default, so an unmentioned flag leaves the
+    # environment variable in charge. Passing argparse's default through would mean
+    # `riskscore serve` silently overrode RISKSCORE_HOST with 127.0.0.1.
+    parser.add_argument("--host", default=None, help="bind address (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=None, help="port (default: 8000)")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        dest="reports_dir",
+        help="the run tree to serve from (default: reports)",
+    )
+    parser.set_defaults(handler=_serve)
+
+
+def _serve(args: argparse.Namespace) -> int:
+    # Deferred: fastapi and uvicorn are the [serve] extra. See the module docstring.
+    from risk_score.api import Settings, create_app
+
+    overrides = {
+        name: value
+        for name, value in (
+            ("host", args.host),
+            ("port", args.port),
+            ("reports_dir", args.reports_dir),
+        )
+        if value is not None
+    }
+    # pydantic's ValidationError is a ValueError, so a refused public bind arrives
+    # in `main` as a user error with the settings validator's own message and no
+    # traceback - which is the right shape for "you asked to expose this".
+    settings = Settings(**overrides)
+
+    try:
+        import uvicorn
+    except ModuleNotFoundError as error:  # pragma: no cover - depends on the install
+        raise ValueError("serve needs the web dependencies: pip install -e '.[serve]'") from error
+
+    # `log_config=None` because `create_app` has already configured logging.
+    # uvicorn's default installs its own dictConfig, which would replace the
+    # handlers that emit the run id and the request id - so the access log would
+    # look fine and every application record would lose its context.
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_config=None)
+    return 0
+
+
+def _add_bench(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser(
+        "bench",
+        help="measure single-applicant scoring latency",
+        description=(
+            "Scores one generated applicant repeatedly against a published run and "
+            "reports nearest-rank percentiles, with and without reason codes. "
+            "In-process: no HTTP, no JSON, no socket, so what is measured is the "
+            "part this project controls. Needs no extract - the applicant is "
+            "generated - so it runs anywhere a run directory exists."
+        ),
+    )
+    parser.add_argument("run_id", nargs="?", default=None, help="run to measure (default: active)")
+    _add_output_dir(parser)
+    parser.add_argument(
+        "--calls",
+        type=int,
+        default=BENCH_CALLS,
+        help=f"timed calls per configuration (default: {BENCH_CALLS})",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=BENCH_WARMUP,
+        help=f"untimed calls first, to exclude first-call costs (default: {BENCH_WARMUP})",
+    )
+    parser.add_argument("--json", action="store_true", help="emit the measurements as JSON")
+    parser.set_defaults(handler=_bench)
+
+
+def _bench(args: argparse.Namespace) -> int:
+    # Deferred for the same reason as `serve`: this reaches into `risk_score.api`.
+    from risk_score.api.bench import bench_applicant, measure
+    from risk_score.api.scoring import ScoringService
+
+    directory = _run_directory(args.output_dir, args.run_id)
+    bundle = load_bundle(directory)
+    service = ScoringService(bundle)
+    applicant = bench_applicant(bundle.feature_spec)
+
+    common = {"calls": args.calls, "warmup": args.warmup}
+    results = [measure(service, applicant, label="score only", with_reasons=False, **common)]
+    # Only when the bundle can actually explain. Measuring a "with reason codes"
+    # configuration that silently produced none would report the cheaper number
+    # under the more expensive label, which is the one way this output could lie.
+    if service.can_explain:
+        results.append(
+            measure(service, applicant, label="with reason codes", with_reasons=True, **common)
+        )
+
+    if args.json:
+        print(json.dumps([result.as_dict() for result in results], indent=2))
+        return 0
+
+    print(f"run {bundle.metadata.run_id} ({bundle.metadata.model_type})")
+    for result in results:
+        print(f"  {result}")
+    if not service.can_explain:
+        print(f"\nreason codes unavailable, so not measured: {service.explainer_error}")
     return 0
 
 

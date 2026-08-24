@@ -25,7 +25,15 @@ from risk_score.artifacts import (
     read_active_run_id,
     read_registry,
 )
-from risk_score.cli import EXIT_USER_ERROR, TRAIN_SUMMARY_KEYS, build_parser, main
+from risk_score.cli import (
+    BENCH_CALLS,
+    BENCH_WARMUP,
+    EXIT_USER_ERROR,
+    TRAIN_SUMMARY_KEYS,
+    build_parser,
+    main,
+)
+from risk_score.pipeline import RunResult
 from risk_score.reporting import COMPARISON_FILENAME
 
 #: The synthetic default of 4000 rows takes a few seconds to fit; these tests are
@@ -641,3 +649,99 @@ def test_card_for_an_unknown_run_is_a_user_error(
         main(["card", "no-such-run", "--output-dir", str(tmp_path / "reports")]) == EXIT_USER_ERROR
     )
     assert "no-such-run" in capsys.readouterr().err
+
+
+# --- serve and bench -----------------------------------------------------------
+
+
+def test_bench_defaults_match_the_library() -> None:
+    """``--help`` states the numbers, so the two spellings have to agree.
+
+    ``cli.py`` cannot import :mod:`risk_score.api.bench` at module scope - fastapi
+    is the ``[serve]`` extra and ``riskscore train`` must work without it - so the
+    defaults are spelled in both places. This is what keeps them in step.
+    """
+    from risk_score.api.bench import DEFAULT_CALLS, DEFAULT_WARMUP
+
+    assert (BENCH_CALLS, BENCH_WARMUP) == (DEFAULT_CALLS, DEFAULT_WARMUP)
+
+
+def test_bench_measures_both_configurations(
+    trained_run: RunResult, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Against the session's published run, and it needs no extract to do it - the
+    applicant is generated, which is what makes the command runnable on a serving
+    box that has a bundle and no data."""
+    reports = trained_run.run_dir.parent.parent
+
+    assert main(["bench", "--output-dir", str(reports), "--calls", "5", "--warmup", "1"]) == 0
+
+    out = capsys.readouterr().out
+    assert trained_run.metadata.run_id in out
+    assert "score only" in out
+    assert "with reason codes" in out
+    assert "n=5" in out
+
+
+def test_bench_json_reports_ordered_percentiles(
+    trained_run: RunResult, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The one arithmetic property worth asserting through the CLI, plus the cost of
+    reason codes - a second pass through the preprocessor, so roughly double."""
+    reports = trained_run.run_dir.parent.parent
+
+    argv = ["bench", "--output-dir", str(reports), "--calls", "9", "--warmup", "2", "--json"]
+    assert main(argv) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [entry["label"] for entry in payload] == ["score only", "with reason codes"]
+    for entry in payload:
+        assert entry["p50_ms"] <= entry["p90_ms"] <= entry["p99_ms"] <= entry["max_ms"]
+    assert payload[1]["p50_ms"] > payload[0]["p50_ms"]
+
+
+def test_bench_on_an_unknown_run_is_a_user_error(
+    trained_run: RunResult, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reports = trained_run.run_dir.parent.parent
+
+    assert main(["bench", "no-such-run", "--output-dir", str(reports)]) == EXIT_USER_ERROR
+    assert "no-such-run" in capsys.readouterr().err
+
+
+def test_serve_refuses_a_public_bind(capsys: pytest.CaptureFixture[str]) -> None:
+    """The refusal that has to survive a typo on a command line.
+
+    No socket is bound and uvicorn is never imported: ``Settings`` validates first,
+    so this is the settings validator's own message arriving as a user error.
+    """
+    assert main(["serve", "--host", "0.0.0.0"]) == EXIT_USER_ERROR
+
+    error = capsys.readouterr().err
+    assert "RISKSCORE_ALLOW_PUBLIC_BIND" in error
+    assert "Traceback" not in error
+
+
+def test_serve_leaves_the_environment_in_charge_of_what_was_not_passed(
+    trained_run: RunResult, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unmentioned flag must not override a ``RISKSCORE_*`` variable.
+
+    The reason ``--port`` defaults to ``None`` rather than 8000: passing argparse's
+    default straight into ``Settings`` would mean ``riskscore serve`` silently
+    ignored the port an operator configured.
+    """
+    import uvicorn
+
+    captured: dict[str, object] = {}
+    monkeypatch.setenv("RISKSCORE_PORT", "8137")
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: captured.update(kwargs))
+
+    argv = ["serve", "--output-dir", str(trained_run.run_dir.parent.parent)]
+    assert main(argv) == 0
+
+    assert captured["port"] == 8137
+    assert captured["host"] == "127.0.0.1"
+    # uvicorn would otherwise install its own dictConfig and replace the handlers
+    # that put a request id on every record.
+    assert captured["log_config"] is None
