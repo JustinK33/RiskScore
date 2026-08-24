@@ -20,6 +20,8 @@ The pipeline was not slow on the real dataset; it could not run on it at all, an
 The fix is not a better dtype check.
 It is to delete the inference, so that a string column reaching `OneHotEncoder` unintentionally stops being a bug that has been fixed and becomes a state the code cannot represent.
 
+Why these steps live inside the `Pipeline` rather than ahead of it - and what that costs - is [decisions/0002-feature-engineering-inside-the-pipeline.md](../decisions/0002-feature-engineering-inside-the-pipeline.md).
+
 ## Public API
 
 | Name | What it does |

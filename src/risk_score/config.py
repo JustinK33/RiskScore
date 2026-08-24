@@ -42,7 +42,8 @@ from risk_score.evaluation import CostMatrix
 
 #: Shipped defaults, so ``RunConfig()`` is a usable configuration and the YAML
 #: only has to state what it changes. The windows suit the synthetic extract and
-#: the 2013-2016 slice of the real one; see ``docs/decisions``.
+#: the 2013-2016 slice of the real one; see
+#: ``docs/decisions/0003-train-validation-test-split.md``.
 DEFAULT_SPLIT_WINDOWS: dict[str, tuple[str, str]] = {
     "train": ("2013-01", "2014-12"),
     "validation": ("2015-01", "2015-12"),

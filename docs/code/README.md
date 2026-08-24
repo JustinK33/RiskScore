@@ -27,6 +27,13 @@ Read these in order; each one hands its output to the next.
 | `src/risk_score/leakage_check.py` | [leakage_check.md](leakage_check.md) | The allow-list audit: what reached the model, and why nothing else did. |
 | `src/risk_score/transformers.py` | [transformers.md](transformers.md) | `FeatureSpec` and the two in-Pipeline steps that enforce it. No dtype inference. |
 
+## The model
+
+| File | Page | One line |
+| --- | --- | --- |
+| `src/risk_score/config.py` | [config.md](config.md) | One validated run configuration. Unknown keys raise instead of becoming defaults. |
+| `src/risk_score/modeling.py` | [modeling.md](modeling.md) | The tri-split, the declared preprocessor, and the trainers. No dtype inference, no fit on validation. |
+
 ## Fixtures
 
 | File | Page | One line |
