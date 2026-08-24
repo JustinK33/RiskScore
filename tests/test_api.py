@@ -30,7 +30,7 @@ from pydantic import ValidationError
 from risk_score.api import Settings, create_app
 from risk_score.api.app import summarize_validation_errors
 from risk_score.api.deps import require_api_key
-from risk_score.api.reports import REPORTS, RUN_ID_PATTERN
+from risk_score.api.reports import ARTIFACT_FILENAMES, REPORTS, RUN_ID_PATTERN
 from risk_score.pipeline import RunResult
 
 #: Every report a plain ``riskscore train`` writes. ``comparison`` is excluded
@@ -682,7 +682,139 @@ def test_report_payloads_contain_no_nan_token(client: TestClient) -> None:
         assert "Infinity" not in text
 
 
-# --- 6. OpenAPI ----------------------------------------------------------------
+# --- 6. run history and artifacts ----------------------------------------------
+
+
+def test_run_history_lists_the_active_run(client: TestClient, trained_run: RunResult) -> None:
+    response = client.get("/api/runs")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["active_run_id"] == trained_run.metadata.run_id
+    assert [run["run_id"] for run in body["runs"]] == [trained_run.metadata.run_id]
+    entry = body["runs"][0]
+    # The registry carries the headline metrics, which is what lets a history table
+    # render from one file rather than from one manifest read per row.
+    assert entry["metrics"]["auc_roc"] is not None
+    assert entry["feature_tier"] == "origination_only"
+
+
+def test_run_history_is_empty_rather_than_an_error_before_any_run(tmp_path: Path) -> None:
+    """A fresh clone has no registry. That is a state, not a failure.
+
+    503 here would make the dashboard's run selector the thing that breaks on a
+    first visit, which is the visit that matters most.
+    """
+    settings = Settings(reports_dir=tmp_path / "empty", log_level="WARNING")
+    with TestClient(create_app(settings), raise_server_exceptions=False) as local:
+        response = local.get("/api/runs")
+
+    assert response.status_code == 200
+    assert response.json() == {"active_run_id": None, "runs": []}
+
+
+def test_manifest_is_served_verbatim(client: TestClient, trained_run: RunResult) -> None:
+    response = client.get(f"/api/runs/{trained_run.metadata.run_id}")
+
+    assert response.status_code == 200, response.text
+    on_disk = json.loads((trained_run.run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert response.json() == on_disk
+    # Re-serializing a manifest through a schema written later is how a recorded
+    # field silently stops being reported, so byte-level equality is the assertion.
+    assert response.json()["embargo"]
+
+
+def test_model_card_is_served_as_markdown(client: TestClient, trained_run: RunResult) -> None:
+    response = client.get(f"/api/runs/{trained_run.metadata.run_id}/card")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert response.text == (trained_run.run_dir / "model_card.md").read_text(encoding="utf-8")
+    assert "$" not in response.text, "a template placeholder survived into the card"
+
+
+@pytest.mark.parametrize("name", sorted(ARTIFACT_FILENAMES))
+def test_every_allowlisted_artifact_is_served(
+    client: TestClient, trained_run: RunResult, name: str
+) -> None:
+    """The allowlist and the run directory must agree.
+
+    An entry that no run writes is a 404 nobody notices until a dashboard panel is
+    blank; a file every run writes but the list omits is unreachable. Both are
+    caught here, and both were real risks while the filenames were spelled twice.
+    """
+    response = client.get(f"/artifacts/{trained_run.metadata.run_id}/{name}")
+
+    assert response.status_code == 200, f"{name}: {response.text[:200]}"
+    assert response.content == (trained_run.run_dir / name).read_bytes()
+    assert "immutable" in response.headers["cache-control"]
+
+
+def test_the_figure_is_served_as_an_image(client: TestClient, trained_run: RunResult) -> None:
+    """The one allowlist entry containing a separator, which is the interesting one."""
+    response = client.get(f"/artifacts/{trained_run.metadata.run_id}/figures/calibration_test.png")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "image/png"
+    # Inline, not an attachment: the dashboard renders this in the page.
+    assert "attachment" not in response.headers.get("content-disposition", "")
+
+
+def test_the_model_pickle_is_not_served(client: TestClient, trained_run: RunResult) -> None:
+    """The one file in a run directory that must not be reachable.
+
+    A pickle offered over HTTP is an invitation to unpickle something a stranger
+    chose. It is in the same directory as everything above, so this is the
+    assertion that the allowlist is an allowlist.
+    """
+    assert (trained_run.run_dir / "model.joblib").is_file(), "otherwise this proves nothing"
+
+    response = client.get(f"/artifacts/{trained_run.metadata.run_id}/model.joblib")
+
+    assert response.status_code == 404
+    assert "model.joblib" not in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../../../etc/passwd",
+        "..%2f..%2fmodel.joblib",
+        "figures/../model.joblib",
+        "metrics.json/../model.joblib",
+        "registry.json",
+        "",
+        "METRICS.JSON",
+    ],
+)
+def test_an_artifact_name_outside_the_allowlist_is_404(
+    client: TestClient, trained_run: RunResult, name: str
+) -> None:
+    """Traversal, case games and files from the parent directory are all one 404.
+
+    ``registry.json`` is in the list on purpose: it exists, one directory up, and
+    an allowlist checked after joining rather than before would have served it.
+    """
+    response = client.get(f"/artifacts/{trained_run.metadata.run_id}/{name}")
+
+    assert response.status_code in {404, 422}
+    if response.headers["content-type"].startswith("application/json"):
+        assert "/" not in response.json().get("detail", "")
+
+
+def test_an_artifact_from_an_unknown_run_is_404(client: TestClient) -> None:
+    response = client.get("/artifacts/nope/metrics.json")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No such run."
+
+
+def test_a_manifest_from_an_unknown_run_is_404(client: TestClient) -> None:
+    assert client.get("/api/runs/nope").status_code == 404
+    assert client.get("/api/runs/nope/card").status_code == 404
+
+
+# --- 7. OpenAPI ----------------------------------------------------------------
 
 
 def test_openapi_describes_the_loaded_model(client: TestClient, trained_run: RunResult) -> None:
@@ -703,7 +835,7 @@ def test_docs_can_be_switched_off(api_settings: Settings) -> None:
         assert client.get("/openapi.json").status_code == 404
 
 
-# --- 7. settings ---------------------------------------------------------------
+# --- 8. settings ---------------------------------------------------------------
 
 
 def test_public_bind_is_refused_without_the_flag() -> None:

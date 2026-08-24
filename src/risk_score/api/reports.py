@@ -43,13 +43,18 @@ from typing import Any, Final
 
 import pandas as pd
 from fastapi import HTTPException, Request, Response, status
+from fastapi.responses import FileResponse
 
 from risk_score.artifacts import (
+    CALIBRATION_FIGURE,
     CALIBRATION_TEST_FILENAME,
     CALIBRATION_VALIDATION_FILENAME,
+    MANIFEST_FILENAME,
     METRICS_FILENAME,
+    MODEL_CARD_FILENAME,
     PSI_FEATURES_FILENAME,
     PSI_SCORE_FILENAME,
+    RUN_LOG_FILENAME,
     SHAP_SUMMARY_FILENAME,
     THRESHOLD_COSTS_FILENAME,
     VINTAGE_METRICS_FILENAME,
@@ -138,6 +143,42 @@ REPORTS: Final[dict[str, Report]] = {
     # which is a 404 rather than an empty object - "nothing has been compared" and
     # "the two models tied" are different answers.
     "comparison": Report(parts=(("comparison", COMPARISON_FILENAME),), root_scoped=True),
+}
+
+
+#: Every file in a run directory that may be fetched by name, and nothing else.
+#: An allowlist rather than a pattern: ``model.joblib`` is in the same directory,
+#: and a pickle offered over HTTP is an invitation to unpickle something a
+#: stranger chose. The run log is included deliberately - it is the run's own
+#: record and contains no request data - and so is the figure, because the
+#: dashboard renders it.
+ARTIFACT_FILENAMES: Final = frozenset(
+    {
+        MANIFEST_FILENAME,
+        METRICS_FILENAME,
+        MODEL_CARD_FILENAME,
+        CALIBRATION_VALIDATION_FILENAME,
+        CALIBRATION_TEST_FILENAME,
+        THRESHOLD_COSTS_FILENAME,
+        VINTAGE_METRICS_FILENAME,
+        PSI_SCORE_FILENAME,
+        PSI_FEATURES_FILENAME,
+        SHAP_SUMMARY_FILENAME,
+        CALIBRATION_FIGURE,
+        RUN_LOG_FILENAME,
+    }
+)
+
+#: By suffix, because the allowlist is closed: there are five kinds of file in a
+#: run directory and no sixth can appear without this dictionary being edited.
+#: Charsets are explicit on the text types - a browser guessing an encoding for a
+#: model card is how a card with a non-ASCII feature name renders as mojibake.
+MEDIA_TYPES: Final = {
+    ".json": "application/json",
+    ".csv": "text/csv; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+    ".png": "image/png",
+    ".log": "text/plain; charset=utf-8",
 }
 
 
@@ -288,3 +329,39 @@ def report_response(request: Request, name: str, run_id: str | None = None) -> R
 
     body = _serialize(directory, label, name, version)
     return Response(content=body, media_type="application/json", headers=headers)
+
+
+def artifact_response(request: Request, run_id: str, name: str) -> FileResponse:
+    """One named file out of one run directory, or a 404.
+
+    Three guards, and the first one does almost all of the work: ``name`` must be
+    a member of :data:`ARTIFACT_FILENAMES`, an exact-match allowlist, so no input
+    that is not one of twelve known strings reaches the filesystem at all. The run
+    id goes through the same pattern-plus-containment check as a report, and the
+    resolved path is checked for containment again - because ``figures/`` means one
+    entry legitimately contains a separator, and that is exactly the shape a
+    traversal wants to borrow.
+
+    Sent with :class:`~fastapi.responses.FileResponse`, which streams from the
+    file rather than reading it into memory, and no ``filename=`` so a figure
+    renders in the page instead of downloading.
+    """
+    settings = request.app.state.settings
+    if name not in ARTIFACT_FILENAMES:
+        # Same 404 as an unknown run, and deliberately not a 400 listing what is
+        # allowed: the list is in the OpenAPI document for anybody entitled to it.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such artifact.")
+
+    run_dir, _ = resolve_run_dir(settings.runs_dir, run_id, settings.reports_dir)
+    path = (run_dir / name).resolve()
+    if not path.is_file() or run_dir not in path.parents:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such artifact.")
+
+    return FileResponse(
+        path,
+        media_type=MEDIA_TYPES.get(path.suffix, "application/octet-stream"),
+        # A run directory is immutable once published, so its files may be cached
+        # by the year. This is the only place that matters much: the calibration
+        # figure is the largest thing the service serves.
+        headers={"Cache-Control": IMMUTABLE_CACHE_CONTROL},
+    )

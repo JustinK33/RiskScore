@@ -1,4 +1,4 @@
-"""Every route that only reads: scoring, identity, reports, and health.
+"""Every route that only reads: scoring, identity, reports, run history, health.
 
 Read-only in the sense that matters for a threat model - nothing here writes to
 disk, starts a process, or changes what the next request will see. That is what
@@ -9,10 +9,16 @@ Scoring is read-only despite being a POST. The verb is POST because the request
 body is an applicant's financial details, and a GET would put them in the query
 string, which proxies log and browsers keep in history.
 
-The report routes are deliberately thin. Every one of them is a name and a
-docstring over :func:`risk_score.api.reports.report_response`, because caching,
-ETag revalidation and path containment are the same problem for all seven and
-seven copies of that logic is seven places for one of them to be missing a guard.
+The report and artifact routes are deliberately thin. Every one of them is a name
+and a docstring over :mod:`risk_score.api.reports`, because caching, ETag
+revalidation and path containment are the same problem for all of them, and ten
+copies of that logic is ten places for one to be missing a guard.
+
+Everything here is reachable without a key, which is the point of the file
+boundary: a reviewer asking what an unauthenticated caller can reach reads this
+file and stops. Nothing here names a path the caller supplied, either - a run id
+is checked against a pattern *and* for containment, and an artifact name has to
+be a member of a closed allowlist.
 """
 
 from __future__ import annotations
@@ -20,12 +26,12 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Path, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 
 from risk_score.api.deps import ApplicantModelDep, ServiceDep, SettingsDep
-from risk_score.api.reports import report_response
+from risk_score.api.reports import artifact_response, report_response
 from risk_score.api.schemas import (
     ERROR_RESPONSES,
     BatchOut,
@@ -37,10 +43,17 @@ from risk_score.api.schemas import (
     PredictionOut,
     PredictOptions,
     ReasonCodeOut,
+    RunListOut,
     SchemaOut,
     describe_spec,
 )
 from risk_score.api.scoring import Score, ScoringService
+from risk_score.artifacts import (
+    MANIFEST_FILENAME,
+    MODEL_CARD_FILENAME,
+    read_active_run_id,
+    read_registry,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -269,6 +282,89 @@ async def comparison(request: Request) -> Response:
     them apart from ``{}``.
     """
     return report_response(request, "comparison")
+
+
+# --- run history ---------------------------------------------------------------
+
+#: A run id in the path rather than the query, because here it identifies the
+#: resource instead of selecting a view of the active one. Length-bounded so an
+#: absurd id is refused by the router before any handler runs.
+RunIdPath = Annotated[str, Path(description="A published run id.", max_length=120)]
+
+
+@router.get(
+    "/api/runs",
+    response_model=RunListOut,
+    responses=ERROR_RESPONSES,
+    tags=["runs"],
+    summary="Every published run, newest first",
+)
+async def list_runs(settings: SettingsDep) -> RunListOut:
+    """The run history, from ``registry.json``, plus which run is being served.
+
+    One file read, not one per run: the registry carries each run's headline
+    metrics as well as its identity, precisely so a history table does not cost
+    twenty manifest reads per page load.
+
+    Reversed here rather than in :func:`~risk_score.artifacts.read_registry`,
+    which is append-ordered because that is what an append-only index is. Newest
+    first is a presentation choice and belongs at the presentation edge.
+    """
+    return RunListOut(
+        active_run_id=read_active_run_id(settings.reports_dir),
+        runs=list(reversed(read_registry(settings.reports_dir))),
+    )
+
+
+@router.get(
+    "/api/runs/{run_id}",
+    responses=_REPORT_RESPONSES,
+    tags=["runs"],
+    summary="One run's full manifest",
+)
+async def run_manifest(request: Request, run_id: RunIdPath) -> Response:
+    """Everything recorded about a run: dataset, split windows, embargo, versions.
+
+    Served as the file's own bytes rather than a model built from it. A manifest is
+    the record of what a run did, and re-serializing it through a schema written
+    later is how a field silently stops being reported.
+    """
+    return artifact_response(request, run_id, MANIFEST_FILENAME)
+
+
+@router.get(
+    "/api/runs/{run_id}/card",
+    responses=_REPORT_RESPONSES,
+    tags=["runs"],
+    summary="One run's model card",
+    response_class=Response,
+)
+async def run_card(request: Request, run_id: RunIdPath) -> Response:
+    """The generated model card, as markdown.
+
+    Markdown rather than rendered HTML: the card is a document to read, commit or
+    attach to a review, and rendering it server-side would put an HTML escaping
+    problem inside a service whose job is arithmetic.
+    """
+    return artifact_response(request, run_id, MODEL_CARD_FILENAME)
+
+
+@router.get(
+    "/artifacts/{run_id}/{name:path}",
+    responses=_REPORT_RESPONSES,
+    tags=["runs"],
+    summary="One artifact file from one run",
+)
+async def artifact(request: Request, run_id: RunIdPath, name: str) -> Response:
+    """A named file from a run directory, from a closed allowlist.
+
+    ``{name:path}`` accepts a separator because one allowed entry is
+    ``figures/calibration_test.png``. That is safe *because* the allowlist is
+    exact-match rather than pattern-based: no string that is not one of a dozen
+    known filenames reaches the filesystem. There is no directory listing, and
+    ``model.joblib`` is not on the list.
+    """
+    return artifact_response(request, run_id, name)
 
 
 # --- health --------------------------------------------------------------------
