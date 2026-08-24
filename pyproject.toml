@@ -46,7 +46,10 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "hypothesis>=6.100",
-    "httpx>=0.27",
+    # httpx2 rather than httpx: starlette's TestClient warns that the httpx
+    # backend is deprecated, and a suite that ships a deprecation warning trains
+    # everyone to ignore the next one.
+    "httpx2>=2.0",
     "ruff>=0.5",
     "mypy>=1.8",
 ]

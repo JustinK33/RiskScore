@@ -9,12 +9,14 @@ demo path share one generator.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pandas as pd
 import pytest
+from fastapi.testclient import TestClient
 
+from risk_score.api import Settings, create_app
 from risk_score.pipeline import RunResult, train_run
 from risk_score.sample_data import make_synthetic_loans
 
@@ -83,6 +85,62 @@ def trained_run(tmp_path_factory: pytest.TempPathFactory) -> RunResult:
     dataset = root / "loans.csv"
     make_synthetic_loans(n_rows=SMALL_ROWS).to_csv(dataset, index=False)
     return train_run(dataset, output_dir=root / "reports")
+
+
+@pytest.fixture
+def api_settings(trained_run: RunResult) -> Settings:
+    """Service settings pointing at the session's published run.
+
+    Built explicitly rather than from the environment. ``Settings()`` reads
+    ``RISKSCORE_*`` and ``.env``, so a test that relied on the default would pass
+    or fail depending on the developer's shell.
+    """
+    return Settings(
+        reports_dir=trained_run.run_dir.parent.parent,
+        log_level="WARNING",
+    )
+
+
+@pytest.fixture
+def client(api_settings: Settings) -> Iterator[TestClient]:
+    """A client over a real app with the session's bundle loaded.
+
+    ``raise_server_exceptions=False`` so an unhandled error is delivered as the
+    500 a real client would receive, which is the thing worth asserting about -
+    the default re-raises it into the test and the response body is never seen.
+    """
+    with TestClient(create_app(api_settings), raise_server_exceptions=False) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def applicant() -> dict[str, object]:
+    """One valid applicant, in the extract's own string dialect.
+
+    Strings rather than numbers for ``term``, ``emp_length`` and ``revol_util``
+    because that is the harder case and the one a client copying values out of a
+    Lending Club CSV will send.
+    """
+    return {
+        "issue_d": "Jun-2015",
+        "loan_amnt": 15000,
+        "term": " 36 months",
+        "purpose": "debt_consolidation",
+        "annual_inc": 62000,
+        "emp_length": "5 years",
+        "home_ownership": "RENT",
+        "verification_status": "Verified",
+        "addr_state": "CA",
+        "dti": 18.2,
+        "delinq_2yrs": 0,
+        "earliest_cr_line": "Aug-2003",
+        "inq_last_6mths": 1,
+        "open_acc": 9,
+        "pub_rec": 0,
+        "revol_bal": 12000,
+        "revol_util": "62.5%",
+        "total_acc": 21,
+    }
 
 
 @pytest.fixture
