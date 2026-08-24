@@ -84,6 +84,11 @@ class Report:
 
     parts: tuple[tuple[str, str], ...]
     optional: frozenset[str] = frozenset()
+    #: Read from the report root rather than from a run directory. True only for
+    #: the comparison, which is a statement about several runs and is published
+    #: beside ``registry.json`` for the reasons :mod:`risk_score.reporting`
+    #: documents. A root-scoped report has no ``?run_id=``.
+    root_scoped: bool = False
 
     def filenames(self) -> tuple[str, ...]:
         return tuple(filename for _, filename in self.parts)
@@ -113,10 +118,12 @@ REPORTS: Final[dict[str, Report]] = {
         )
     ),
     "shap-summary": Report(parts=(("features", "shap_summary.csv"),)),
-    # Written only by `riskscore compare`. Absent on a plain train run, which is
-    # a 404 rather than an empty object: "this run has no comparison" and "the
-    # two models tied" are different answers.
-    "comparison": Report(parts=(("comparison", "comparison.json"),)),
+    # Written only by `riskscore compare`, and at the report root: a comparison
+    # describes several runs and is only complete once all of them are published,
+    # so no single run directory owns it. Absent until a comparison has been run,
+    # which is a 404 rather than an empty object - "nothing has been compared" and
+    # "the two models tied" are different answers.
+    "comparison": Report(parts=(("comparison", "comparison.json"),), root_scoped=True),
 }
 
 
@@ -190,6 +197,11 @@ def _serialize(
 ) -> bytes:
     """The payload bytes for one version of one report.
 
+    ``run_id`` is empty for a root-scoped report and the key is then omitted
+    rather than filled in with the active run: a comparison names the runs it
+    compares inside its own payload, and stamping the currently-served run onto a
+    document about several would be a claim the file does not make.
+
     ``_version`` is unused in the body and load-bearing in the signature: it is
     the file fingerprint, and including it in the cache key is the whole
     invalidation mechanism. Reading it inside the function would defeat the point.
@@ -199,7 +211,7 @@ def _serialize(
     benefit.
     """
     report = REPORTS[name]
-    payload: dict[str, Any] = {"run_id": run_id}
+    payload: dict[str, Any] = {"run_id": run_id} if run_id else {}
     for key, filename in report.parts:
         path = run_dir / filename
         if not path.is_file():
@@ -233,8 +245,16 @@ def report_response(request: Request, name: str, run_id: str | None = None) -> R
     validator would be asserting byte equality that does not hold.
     """
     settings = request.app.state.settings
-    run_dir, explicit = resolve_run_dir(settings.runs_dir, run_id, settings.reports_dir)
-    version = fingerprint(run_dir, REPORTS[name])
+    report = REPORTS[name]
+    if report.root_scoped:
+        # No run to resolve and nothing to name: the file sits beside
+        # `registry.json` and the next comparison overwrites it, so it revalidates
+        # like the active run rather than caching immutably.
+        directory, label, explicit = Path(settings.reports_dir).resolve(), "", False
+    else:
+        directory, explicit = resolve_run_dir(settings.runs_dir, run_id, settings.reports_dir)
+        label = directory.name
+    version = fingerprint(directory, report)
     if not version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -252,5 +272,5 @@ def report_response(request: Request, name: str, run_id: str | None = None) -> R
     if any(etag.strip('W/"') == candidate.strip(' W/"') for candidate in presented.split(",")):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
 
-    body = _serialize(run_dir, run_dir.name, name, version)
+    body = _serialize(directory, label, name, version)
     return Response(content=body, media_type="application/json", headers=headers)

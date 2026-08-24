@@ -570,6 +570,57 @@ def test_comparison_is_404_on_a_plain_train_run(client: TestClient) -> None:
     assert set(response.json()) == {"detail", "request_id"}
 
 
+#: Stand-in for what ``riskscore compare`` writes. Fabricated rather than
+#: produced by a real comparison, which needs two full fits and XGBoost - the
+#: thing under test is where the endpoint *looks*, not what compare computes.
+COMPARISON_JSON = {"generated_at": "2026-01-01T00:00:00Z", "variants": ["lr", "xgb"]}
+
+
+def _reports_with_comparison(trained_run: RunResult, tmp_path: Path) -> Path:
+    """A copy of the trained report tree with a ``comparison.json`` at its root."""
+    import shutil
+
+    reports = tmp_path / "reports"
+    shutil.copytree(trained_run.run_dir.parent.parent, reports)
+    (reports / "comparison.json").write_text(json.dumps(COMPARISON_JSON), encoding="utf-8")
+    return reports
+
+
+def test_comparison_is_read_from_the_report_root(trained_run: RunResult, tmp_path: Path) -> None:
+    """``comparison.json`` lives beside ``registry.json``, not inside a run.
+
+    It describes several runs and is only complete once all of them are published,
+    so no run directory owns it - see :mod:`risk_score.reporting`. This test is
+    the one that would have caught the endpoint reading it from the run directory,
+    where it will never be.
+    """
+    reports = _reports_with_comparison(trained_run, tmp_path)
+    with TestClient(
+        create_app(Settings(reports_dir=reports, log_level="WARNING")),
+        raise_server_exceptions=False,
+    ) as local:
+        response = local.get("/api/comparison")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["comparison"] == COMPARISON_JSON
+    # No run id on a document about several runs, and no immutable caching on a
+    # file the next comparison overwrites.
+    assert "run_id" not in response.json()
+    assert response.headers["cache-control"] == "no-cache"
+
+
+def test_comparison_ignores_a_run_id(trained_run: RunResult, tmp_path: Path) -> None:
+    """``?run_id=`` is not part of this route's contract, so it cannot 404 on it."""
+    reports = _reports_with_comparison(trained_run, tmp_path)
+    with TestClient(
+        create_app(Settings(reports_dir=reports, log_level="WARNING")),
+        raise_server_exceptions=False,
+    ) as local:
+        response = local.get("/api/comparison", params={"run_id": "../../etc"})
+
+    assert response.status_code == 200, response.text
+
+
 @pytest.mark.parametrize(
     "run_id",
     ["../../etc", "..", ".", "nope", "runs/x", "a" * 200, ""],

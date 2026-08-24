@@ -257,14 +257,18 @@ async def shap_summary(request: Request, run_id: RunIdDep = None) -> Response:
 @router.get(
     "/api/comparison", responses=_REPORT_RESPONSES, tags=["reports"], summary="Model comparison"
 )
-async def comparison(request: Request, run_id: RunIdDep = None) -> Response:
-    """LR against XGBoost on an identical split. 404 on a plain train run.
+async def comparison(request: Request) -> Response:
+    """LR against XGBoost on an identical split. 404 until a comparison is run.
 
-    404 rather than an empty object, because "this run compared nothing" and "the
+    The only report with no ``?run_id=``: a comparison describes several runs at
+    once and is published at the report root rather than inside any one of them,
+    so there is no run to select. The payload names the runs it compares.
+
+    404 rather than an empty object, because "nothing has been compared" and "the
     two models scored the same" are different answers and a client cannot tell
     them apart from ``{}``.
     """
-    return report_response(request, "comparison", run_id)
+    return report_response(request, "comparison")
 
 
 # --- health --------------------------------------------------------------------
