@@ -188,7 +188,7 @@ def build_run_id(
     created_at: datetime | None = None,
     commit: str | None = None,
 ) -> str:
-    """``20260824T101530Z-logistic_regression-origination_only-02e3a94``.
+    """``20260824T101530123Z-logistic_regression-origination_only-02e3a94``.
 
     Sortable first, because the most common question about a run directory is
     "which is the newest", and a lexical sort answers it with no parsing. Then
@@ -197,8 +197,16 @@ def build_run_id(
 
     Basic ISO format: colons are legal in POSIX filenames and a catastrophe on
     Windows and in URLs, and this id appears in both.
+
+    Milliseconds, not seconds, and that is not future-proofing: with the parquet
+    cache warm a synthetic run finishes in well under a second, so two runs of
+    the same model and tier landing in the same second is ordinary rather than
+    pathological - and :func:`staged_run` refuses to overwrite an existing id.
+    ``%f`` is microseconds and always six digits; the slice keeps three, which is
+    finer than any code path that could produce two ids.
     """
-    stamp = (created_at or datetime.now(UTC)).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    moment = (created_at or datetime.now(UTC)).astimezone(UTC)
+    stamp = moment.strftime("%Y%m%dT%H%M%S") + f"{moment.microsecond // 1000:03d}Z"
     return f"{stamp}-{model_type}-{feature_tier(include_lender_priced)}-{commit or git_commit()}"
 
 
@@ -703,10 +711,16 @@ def prune_runs(
 
 
 def now_iso(when: datetime | None = None) -> str:
-    """UTC, seconds resolution, ``Z`` suffix. One spelling of a timestamp.
+    """UTC, millisecond resolution, ``Z`` suffix. One spelling of a timestamp.
 
     Public because the pipeline stamps ``created_at`` with it, and the registry
     sorts runs by that string: two spellings of the same instant - extended here,
     basic in the run id - would sort into two separate groups.
+
+    Millisecond resolution for the same reason :func:`build_run_id` uses it - two
+    runs can share a second - and because the registry breaks ties by this
+    string, so a coarser stamp would make "which run is newest" ambiguous
+    exactly when two runs were published back to back.
     """
-    return (when or datetime.now(UTC)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    moment = (when or datetime.now(UTC)).astimezone(UTC)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"

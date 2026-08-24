@@ -110,8 +110,21 @@ def test_the_run_id_sorts_chronologically_and_names_the_run() -> None:
         commit="02e3a94",
     )
 
-    assert run_id == "20260824T101530Z-xgboost-with_lender_priced-02e3a94"
+    assert run_id == "20260824T101530000Z-xgboost-with_lender_priced-02e3a94"
     assert ":" not in run_id
+    # Milliseconds are zero-padded to a fixed width, which is what keeps the
+    # lexical sort chronological: `...30099Z` must not sort after `...30100Z`.
+    assert build_run_id(
+        model_type="xgboost",
+        include_lender_priced=True,
+        created_at=datetime(2026, 8, 24, 10, 15, 30, 99_000, tzinfo=UTC),
+        commit="02e3a94",
+    ) < build_run_id(
+        model_type="xgboost",
+        include_lender_priced=True,
+        created_at=datetime(2026, 8, 24, 10, 15, 30, 100_000, tzinfo=UTC),
+        commit="02e3a94",
+    )
 
 
 def test_the_tier_is_named_in_the_id_rather_than_spelled_true_or_false() -> None:

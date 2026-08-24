@@ -63,6 +63,7 @@ from risk_score.artifacts import (
     save_bundle,
     staged_run,
 )
+from risk_score.cache import read_raw_loans_cached
 from risk_score.calibration import (
     build_calibration_report,
     fit_calibrator,
@@ -77,7 +78,6 @@ from risk_score.data_loading import (
     create_default_target,
     filter_to_closed_loans,
     filter_to_terms,
-    read_raw_loans,
 )
 from risk_score.evaluation import (
     ClassificationMetrics,
@@ -159,6 +159,7 @@ def train_run(
     model_type: str = "logistic_regression",
     make_active: bool = True,
     keep_runs: int = DEFAULT_RETENTION,
+    cache_dir: str | Path | None = None,
 ) -> RunResult:
     """Fit one model on one extract and publish it as a run directory.
 
@@ -176,6 +177,11 @@ def train_run(
     ``make_active=False`` publishes and registers the run without pointing the
     service at it, which is what ``riskscore compare`` needs: it fits two models
     and only one of them should be served.
+
+    ``cache_dir`` enables the parquet cache for the canonicalized extract, which
+    is what makes a second run on the 1.19 GB file fast. Off by default, because
+    a library call that writes files into the working directory unasked is a
+    surprise; the CLI turns it on.
     """
     # Checked before anything is created, so a typo leaves no half-written run
     # directory behind.
@@ -220,6 +226,7 @@ def train_run(
             run_id=run_id,
             created_at=now_iso(started_at),
             commit=commit,
+            cache_dir=cache_dir,
         )
 
     register_run(
@@ -250,6 +257,7 @@ def _execute_run(
     run_id: str,
     created_at: str,
     commit: str,
+    cache_dir: str | Path | None,
 ) -> RunResult:
     """The run itself, writing into ``staging``. Split out so the atomicity and
     retention wiring above stays readable, and so every ``return`` inside it is
@@ -263,7 +271,15 @@ def _execute_run(
     # share one outcome definition. A filter applied per partition is how two
     # partitions end up answering different questions (see modeling.py's "What
     # must NOT live here").
-    raw, schema_report = read_raw_loans(dataset, column_aliases=config.column_aliases or None)
+    # Hashed once and used twice - as the cache key and as the manifest's record
+    # of which extract this is - because hashing the file is itself a full read.
+    fingerprint = dataset_fingerprint(dataset)
+    raw, schema_report = read_raw_loans_cached(
+        dataset,
+        fingerprint=fingerprint,
+        cache_dir=cache_dir,
+        column_aliases=config.column_aliases or None,
+    )
     rows: dict[str, int] = {"raw": len(raw)}
     loans = filter_to_closed_loans(raw)
     rows["closed"] = len(loans)
@@ -388,7 +404,7 @@ def _execute_run(
         feature_tier=feature_tier(include_lender_priced),
         git_commit=commit,
         dataset_path=str(dataset),
-        dataset_sha256=dataset_fingerprint(dataset),
+        dataset_sha256=fingerprint,
         dataset_bytes=dataset.stat().st_size,
         target_definition=target_definition(),
         rows=rows,

@@ -571,6 +571,53 @@ def test_an_extract_without_revol_util_derives_utilization_from_the_bureau_colum
     assert "revol_util" not in spec.raw_inputs
 
 
+def test_a_second_run_reuses_the_cached_extract_instead_of_reparsing_it(
+    raw_csv: Path, tmp_path: Path
+) -> None:
+    """The cache is wired in, and a hit produces the same numbers as a cold read.
+
+    Each run's own log is the evidence, which is the point of publishing it
+    inside the run directory: the second run states that it read the frame from
+    the cache, and the first states nothing of the kind.
+
+    The extract itself is not deleted here, unlike in ``tests/test_cache.py``:
+    the run hashes the file to key the cache and to stamp the manifest, so the
+    file has to exist even on a hit. What is saved is the 1.19 GB *parse*, not
+    the read.
+    """
+    cache = tmp_path / "cache"
+
+    def once() -> RunResult:
+        return train_run(
+            raw_csv,
+            output_dir=tmp_path / "reports",
+            config=RunConfig(split=SPLIT),
+            cache_dir=cache,
+        )
+
+    cold = once()
+    warm = once()
+    cold_log = (cold.run_dir / RUN_LOG_FILENAME).read_text(encoding="utf-8")
+    warm_log = (warm.run_dir / RUN_LOG_FILENAME).read_text(encoding="utf-8")
+
+    assert len(list(cache.glob("*.parquet"))) == 1
+    assert "from cache" not in cold_log
+    assert f"read {cold.payload['rows']['raw']} rows from cache" in warm_log
+    # A hit that changed an answer would be worse than no cache at all.
+    assert warm.payload["auc_roc"] == cold.payload["auc_roc"]
+    assert warm.payload["rows"] == cold.payload["rows"]
+    assert warm.metadata.dataset_sha256 == cold.metadata.dataset_sha256
+
+
+def test_the_cache_is_off_unless_asked_for(raw_csv: Path, tmp_path: Path) -> None:
+    """A library call that writes into the working directory unasked is a
+    surprise, so `train_run` defaults to no cache and the CLI opts in."""
+    result = run(raw_csv, tmp_path / "reports")
+
+    assert "from cache" not in (result.run_dir / RUN_LOG_FILENAME).read_text(encoding="utf-8")
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["loans.csv", "reports"]
+
+
 def test_an_unsupported_model_type_is_rejected_before_any_work(
     raw_csv: Path, tmp_path: Path
 ) -> None:
