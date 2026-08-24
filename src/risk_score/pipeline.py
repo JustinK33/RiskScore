@@ -40,13 +40,8 @@ from risk_score.evaluation import (
     select_threshold_by_cost,
 )
 from risk_score.leakage_check import audit_columns
-from risk_score.modeling import split_by_time, train_logistic_regression, train_xgboost_model
+from risk_score.modeling import SUPPORTED_MODEL_TYPES, split_by_time, train_model
 from risk_score.transformers import build_feature_spec
-
-TRAINERS = {
-    "logistic_regression": train_logistic_regression,
-    "xgboost": train_xgboost_model,
-}
 
 
 def _predict_default_probability(model: Pipeline, features: pd.DataFrame) -> pd.Series:
@@ -75,8 +70,12 @@ def run_baseline_pipeline(
     using them cannot score an applicant nobody has priced yet. See
     ``docs/decisions/0005-lender-priced-feature-tier.md``.
     """
-    if model_type not in TRAINERS:
-        raise ValueError(f"Supported model types are {sorted(TRAINERS)}; got {model_type!r}.")
+    # Checked before anything is created, so a typo leaves no half-written
+    # report tree behind.
+    if model_type not in SUPPORTED_MODEL_TYPES:
+        raise ValueError(
+            f"Supported model types are {list(SUPPORTED_MODEL_TYPES)}; got {model_type!r}."
+        )
 
     config = config or RunConfig()
     output_path = Path(output_dir)
@@ -118,9 +117,10 @@ def run_baseline_pipeline(
         test=config.split.test,
     )
 
-    model = TRAINERS[model_type](
-        split.x_train, split.y_train, spec=spec, config=config.model_params(model_type)
-    )
+    # The whole split goes in, and `train_model` decides what each model type is
+    # allowed to see: the logistic baseline gets train only, XGBoost additionally
+    # monitors validation to stop boosting early.
+    model = train_model(model_type, split, spec=spec, config=config.model_params(model_type))
     joblib.dump(model, models_path / f"{model_type}.joblib")
 
     # --- 1. the decision rule, chosen on validation only ------------------------

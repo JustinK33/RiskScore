@@ -41,6 +41,16 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from risk_score.transformers import CanonicalizeFrame, EngineerFeatures, FeatureSpec
 
+#: Model types this module can fit. Named here rather than as a dict of
+#: functions so a caller can validate the argument before doing any work.
+SUPPORTED_MODEL_TYPES: tuple[str, ...] = ("logistic_regression", "xgboost")
+
+#: Boosting rounds without a validation-metric improvement before fitting stops.
+#: 30 at a 0.05 learning rate is roughly a 1.5-unit stretch of no progress -
+#: long enough to ride out the noise of a single unlucky round, short enough
+#: that a 400-round budget is not spent memorizing the training vintages.
+DEFAULT_EARLY_STOPPING_ROUNDS = 30
+
 #: A category must cover at least this share of training rows to get its own
 #: one-hot column; the rest are pooled into an "infrequent" level. 0.5% of rows
 #: caps ``addr_state`` at roughly the 30 states with enough volume to estimate a
@@ -414,6 +424,53 @@ def train_logistic_regression(
     return pipeline.fit(x_train, y_train)
 
 
+def fit_with_validation_monitoring(
+    spec: FeatureSpec,
+    estimator: Any,
+    x_train: pd.DataFrame,
+    y_train: pd.Series,
+    x_validation: pd.DataFrame,
+    y_validation: pd.Series,
+    *,
+    min_category_frequency: float = DEFAULT_MIN_CATEGORY_FREQUENCY,
+) -> Pipeline:
+    """Fit an estimator that watches a validation set, and return one Pipeline.
+
+    Early stopping needs an *already transformed* validation matrix, and
+    ``Pipeline.fit`` has nowhere to put one: passing raw validation rows through
+    ``classifier__eval_set`` would hand the estimator a DataFrame of strings. So
+    the preprocessing prefix is fitted and applied explicitly here, the estimator
+    is fitted against both matrices, and the pipeline is *reassembled* from the
+    already-fitted steps.
+
+    The reassembly is sound because ``Pipeline`` does not clone the steps it is
+    given - the objects in the returned pipeline are the ones that were just
+    fitted, and a test asserts the assembled pipeline's predictions equal this
+    function's own two-step predictions.
+
+    Nothing about the validation partition reaches a ``fit`` call other than the
+    estimator's own early-stopping monitor: the medians, the scaling moments, and
+    the category lists all come from ``transform``, which cannot learn.
+    """
+    steps = build_model_pipeline(
+        spec, estimator, min_category_frequency=min_category_frequency
+    ).steps
+    preprocessing = Pipeline(steps=steps[:-1])
+
+    matrix_train = preprocessing.fit_transform(x_train, y_train)
+    # `transform`, not `fit_transform`. This is the line the whole no-leakage
+    # claim rests on, which is why it is one line away from the one above it.
+    matrix_validation = preprocessing.transform(x_validation)
+
+    estimator.fit(
+        matrix_train,
+        y_train,
+        eval_set=[(matrix_validation, y_validation)],
+        verbose=False,
+    )
+    return Pipeline(steps=[*preprocessing.steps, steps[-1]])
+
+
 def train_xgboost_model(
     x_train: pd.DataFrame,
     y_train: pd.Series,
@@ -421,24 +478,90 @@ def train_xgboost_model(
     spec: FeatureSpec,
     config: dict[str, Any] | None = None,
     min_category_frequency: float = DEFAULT_MIN_CATEGORY_FREQUENCY,
+    x_validation: pd.DataFrame | None = None,
+    y_validation: pd.Series | None = None,
+    early_stopping_rounds: int = DEFAULT_EARLY_STOPPING_ROUNDS,
 ) -> Pipeline:
-    """Fit the gradient-boosted model on the training rows only.
+    """Fit the gradient-boosted model, stopping early on validation if given.
 
-    Early stopping needs a *transformed* validation set and so cannot go through
-    ``Pipeline.fit``; that lands with the validation-monitoring commit, which
-    fits the preprocessor, transforms both partitions, fits the estimator with an
-    ``eval_set``, and reassembles the pipeline from the already-fitted steps.
+    Without a validation partition the model spends its whole ``n_estimators``
+    budget, which on 1.8M rows is both slower and worse. With one, boosting stops
+    when the validation metric stops improving and ``predict_proba`` uses the
+    best iteration rather than the last.
     """
     try:
         from xgboost import XGBClassifier
-    except ImportError as exc:  # pragma: no cover - depends on the local libomp
+    except Exception as exc:  # pragma: no cover - depends on the local libomp
+        # Not just ImportError. An installed-but-unloadable wheel raises
+        # XGBoostError from inside the import - a forty-line dlopen dump whose
+        # actual instruction, `brew install libomp`, is buried in the middle of
+        # it. Catching only ImportError let that reach the terminal unedited.
         raise ImportError(
-            "Install the `train` extra to fit XGBoost: pip install -e '.[train]'. "
-            "On macOS the wheel also needs libomp: brew install libomp."
+            f"XGBoost is installed but could not be loaded: {type(exc).__name__}. "
+            f"On macOS the wheel needs the OpenMP runtime: brew install libomp. "
+            f"Otherwise install the train extra: pip install -e '.[train]'."
         ) from exc
 
     params = {**DEFAULT_XGBOOST_PARAMS, **(config or {})}
-    pipeline = build_model_pipeline(
-        spec, XGBClassifier(**params), min_category_frequency=min_category_frequency
+    monitored = x_validation is not None and y_validation is not None
+    if monitored:
+        # Only set with an eval_set present: XGBoost raises if asked to stop
+        # early with nothing to measure.
+        params.setdefault("early_stopping_rounds", early_stopping_rounds)
+    estimator = XGBClassifier(**params)
+
+    if not monitored:
+        pipeline = build_model_pipeline(
+            spec, estimator, min_category_frequency=min_category_frequency
+        )
+        return pipeline.fit(x_train, y_train)
+
+    assert x_validation is not None and y_validation is not None  # narrowed by `monitored`
+    return fit_with_validation_monitoring(
+        spec,
+        estimator,
+        x_train,
+        y_train,
+        x_validation,
+        y_validation,
+        min_category_frequency=min_category_frequency,
     )
-    return pipeline.fit(x_train, y_train)
+
+
+def train_model(
+    model_type: str,
+    split: TimeSplit,
+    *,
+    spec: FeatureSpec,
+    config: dict[str, Any] | None = None,
+    min_category_frequency: float = DEFAULT_MIN_CATEGORY_FREQUENCY,
+) -> Pipeline:
+    """Fit one model type on a split, giving each what it can legitimately use.
+
+    Dispatching here rather than through a uniform trainer signature is
+    deliberate. A shared ``(x_train, y_train, x_validation, y_validation)``
+    signature would make the logistic baseline accept a validation partition it
+    then ignores, which reads like an oversight and invites someone to "fix" it
+    by fitting on it. Only the model that has a use for validation is handed it.
+    """
+    if model_type == "logistic_regression":
+        return train_logistic_regression(
+            split.x_train,
+            split.y_train,
+            spec=spec,
+            config=config,
+            min_category_frequency=min_category_frequency,
+        )
+    if model_type == "xgboost":
+        return train_xgboost_model(
+            split.x_train,
+            split.y_train,
+            spec=spec,
+            config=config,
+            min_category_frequency=min_category_frequency,
+            x_validation=split.x_validation,
+            y_validation=split.y_validation,
+        )
+    raise ValueError(
+        f"Supported model types are {list(SUPPORTED_MODEL_TYPES)}; got {model_type!r}."
+    )

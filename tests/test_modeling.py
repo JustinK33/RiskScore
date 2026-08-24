@@ -15,17 +15,25 @@ import numpy.typing as npt
 import pandas as pd
 import pytest
 from scipy import sparse
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 
 from risk_score.modeling import (
     DEFAULT_LOGISTIC_PARAMS,
+    TimeSplit,
     TimeWindow,
     build_model_pipeline,
     build_preprocessor,
+    fit_with_validation_monitoring,
     split_by_time,
     train_logistic_regression,
+    train_model,
+    train_xgboost_model,
 )
+from risk_score.schema import normalize_credit_schema
 from risk_score.transformers import FeatureSpec, build_feature_spec
+from tests.conftest import requires_xgboost
 
 TRAIN = ("2013-01", "2014-12")
 VALIDATION = ("2015-01", "2015-06")
@@ -430,6 +438,22 @@ def test_a_spec_with_only_categoricals_still_builds_a_preprocessor() -> None:
 # --- the assembled pipeline ----------------------------------------------------
 
 
+@pytest.fixture
+def raw_split(raw_loans: pd.DataFrame) -> TimeSplit:
+    """The synthetic extract, parsed and partitioned the way the pipeline does it."""
+    loans, _ = normalize_credit_schema(raw_loans)
+    target = pd.Series(
+        (loans["loan_status"] == "Charged Off").astype(int), index=loans.index, name="default_flag"
+    )
+    return split_by_time(
+        loans,
+        target,
+        train=("2013-01", "2014-12"),
+        validation=("2015-01", "2015-12"),
+        test=("2016-01", "2016-12"),
+    )
+
+
 def test_the_fitted_pipeline_scores_a_raw_frame_end_to_end(raw_loans: pd.DataFrame) -> None:
     spec = build_feature_spec(raw_loans.columns)
     target = pd.Series(
@@ -471,3 +495,163 @@ def test_a_caller_can_override_a_model_parameter(raw_loans: pd.DataFrame) -> Non
     )
     model = train_logistic_regression(raw_loans, target, spec=spec, config={"C": 0.25})
     assert model.named_steps["classifier"].C == 0.25
+
+
+def test_an_unsupported_model_type_names_the_supported_ones(
+    raw_loans: pd.DataFrame, raw_split: TimeSplit
+) -> None:
+    spec = build_feature_spec(raw_loans.columns)
+    with pytest.raises(ValueError, match="logistic_regression"):
+        train_model("random_forest", raw_split, spec=spec)
+
+
+# --- validation monitoring -----------------------------------------------------
+
+
+class RecordingClassifier(BaseEstimator, ClassifierMixin):
+    """Stands in for ``XGBClassifier`` so the assembly is testable without libomp.
+
+    XGBoost cannot be imported on this machine until ``libomp`` is installed, and
+    the part of validation monitoring that can actually break is not XGBoost's
+    early stopping - it is *this* project's fit-transform-reassemble dance. So
+    that part is verified against a stub that records what it was handed and
+    scores deterministically from it.
+    """
+
+    def fit(
+        self,
+        x: Any,
+        y: Any,
+        eval_set: list[tuple[Any, Any]] | None = None,
+        verbose: bool | None = None,
+    ) -> RecordingClassifier:
+        self.classes_ = np.unique(y)
+        self.n_features_in_ = x.shape[1]
+        self.train_shape_ = x.shape
+        self.eval_shapes_ = [(matrix.shape, len(labels)) for matrix, labels in eval_set or []]
+        self.verbose_ = verbose
+        return self
+
+    def predict_proba(self, x: Any) -> npt.NDArray[np.float64]:
+        # A deterministic function of the row, so "the assembled pipeline predicts
+        # what the manual two-step path predicts" is an exact-equality claim.
+        totals = np.asarray(_dense(x).sum(axis=1), dtype=np.float64)
+        positive = 1.0 / (1.0 + np.exp(-totals / 10.0))
+        return np.column_stack([1.0 - positive, positive])
+
+
+@pytest.fixture
+def monitoring_frames() -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+    """Train and validation frames whose numbers make leakage visible.
+
+    Train ``loan_amnt`` is 10k/20k so the fitted mean is 15k. Validation is 100k
+    - wildly out of range on purpose, because if it reached the scaler's ``fit``
+    the mean would move and the assertion below would fail.
+    """
+    train = pd.DataFrame(
+        {
+            "loan_amnt": [10_000.0, 20_000.0],
+            "term": [" 36 months"] * 2,
+            "annual_inc": [50_000.0, 100_000.0],
+            "issue_d": ["Mar-2013"] * 2,
+            "purpose": ["car", "credit_card"],
+        }
+    )
+    validation = pd.DataFrame(
+        {
+            "loan_amnt": [100_000.0],
+            "term": [" 36 months"],
+            "annual_inc": [60_000.0],
+            "issue_d": ["Mar-2015"],
+            "purpose": ["car"],
+        }
+    )
+    return train, pd.Series([0, 1]), validation, pd.Series([1])
+
+
+def test_the_estimator_receives_a_transformed_validation_matrix(
+    tiny_spec: FeatureSpec,
+    monitoring_frames: tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series],
+) -> None:
+    """Raw validation rows through `classifier__eval_set` would be strings."""
+    x_train, y_train, x_validation, y_validation = monitoring_frames
+    estimator = RecordingClassifier()
+
+    fit_with_validation_monitoring(
+        tiny_spec, estimator, x_train, y_train, x_validation, y_validation
+    )
+
+    # Same width as train - one design matrix, one column order.
+    assert estimator.eval_shapes_ == [((1, estimator.train_shape_[1]), 1)]
+    assert estimator.verbose_ is False
+
+
+def test_the_assembled_pipeline_predicts_what_the_manual_two_step_path_predicts(
+    tiny_spec: FeatureSpec,
+    monitoring_frames: tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series],
+) -> None:
+    """Reassembly relies on sklearn's Pipeline not cloning its steps. If that
+    ever changes, the returned pipeline holds unfitted transformers and this is
+    the test that says so."""
+    x_train, y_train, x_validation, y_validation = monitoring_frames
+    estimator = RecordingClassifier()
+
+    pipeline = fit_with_validation_monitoring(
+        tiny_spec, estimator, x_train, y_train, x_validation, y_validation
+    )
+
+    prefix = Pipeline(steps=pipeline.steps[:-1])
+    expected = estimator.predict_proba(prefix.transform(x_validation))[:, 1]
+    assert pipeline.predict_proba(x_validation)[:, 1].tolist() == expected.tolist()
+
+
+def test_the_validation_partition_never_reaches_the_preprocessor_fit(
+    tiny_spec: FeatureSpec,
+    monitoring_frames: tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series],
+) -> None:
+    """Value-exact: train is 10k and 20k, so the scaler's mean is 15k. Had the
+    100k validation row been fitted on, it would be 43,333."""
+    x_train, y_train, x_validation, y_validation = monitoring_frames
+
+    pipeline = fit_with_validation_monitoring(
+        tiny_spec, RecordingClassifier(), x_train, y_train, x_validation, y_validation
+    )
+    scaler = pipeline.named_steps["preprocess"].named_transformers_["numeric"].named_steps["scale"]
+
+    assert scaler.mean_[0] == 15_000.0
+
+
+@requires_xgboost
+def test_xgboost_stops_early_on_the_validation_partition(raw_split: TimeSplit) -> None:
+    """The real thing, when the local wheel can load. Unverified until then."""
+    spec = build_feature_spec(raw_split.x_train.columns)
+
+    model = train_xgboost_model(
+        raw_split.x_train,
+        raw_split.y_train,
+        spec=spec,
+        x_validation=raw_split.x_validation,
+        y_validation=raw_split.y_validation,
+        # Deliberately far more rounds than a 900-row fixture needs, so stopping
+        # early is the only way best_iteration lands below the budget.
+        config={"n_estimators": 200},
+        early_stopping_rounds=5,
+    )
+    classifier = model.named_steps["classifier"]
+
+    assert classifier.best_iteration < 199
+    assert model.predict_proba(raw_split.x_test)[:, 1].min() > 0.0
+
+
+@requires_xgboost
+def test_xgboost_without_a_validation_partition_uses_its_whole_budget(
+    raw_split: TimeSplit,
+) -> None:
+    spec = build_feature_spec(raw_split.x_train.columns)
+
+    model = train_xgboost_model(
+        raw_split.x_train, raw_split.y_train, spec=spec, config={"n_estimators": 12}
+    )
+
+    # No eval_set, so asking XGBoost to stop early would raise.
+    assert model.named_steps["classifier"].get_params()["early_stopping_rounds"] is None

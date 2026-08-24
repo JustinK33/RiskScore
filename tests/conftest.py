@@ -22,6 +22,30 @@ from risk_score.sample_data import make_synthetic_loans
 SMALL_ROWS = 900
 
 
+def _xgboost_loads() -> bool:
+    """Whether XGBoost can actually be used, not merely whether it is installed.
+
+    ``pytest.importorskip("xgboost")`` is not enough: on macOS without the
+    OpenMP runtime the package is present and importing it raises
+    ``XGBoostError`` from a failed ``dlopen``, which is not an ``ImportError``,
+    so importorskip lets it through and the test *fails* instead of skipping.
+    """
+    try:
+        import xgboost  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+#: Applied to every test that fits a real gradient-boosted model. The stub-based
+#: tests deliberately carry no such marker: the fit-transform-reassemble logic
+#: they cover is this project's, and it must be verified on every machine.
+requires_xgboost = pytest.mark.skipif(
+    not _xgboost_loads(),
+    reason="xgboost cannot be loaded - on macOS run `brew install libomp`",
+)
+
+
 @pytest.fixture
 def raw_loans() -> pd.DataFrame:
     """A raw Lending Club-shaped frame: percent strings, junk columns, NaNs."""
