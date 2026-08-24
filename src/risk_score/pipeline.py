@@ -5,14 +5,17 @@ point (see ``docs/architecture.md``)::
 
     raw -> label -> leakage audit -> feature spec -> tri-split
       TRAIN      fit the pipeline. Nothing else.
-      VALIDATION select the decision threshold.
+      VALIDATION fit the calibrator, then select the decision threshold.
       TEST       score once, report, never fit anything.
 
-Two properties are worth stating because both were previously violated:
+Three properties are worth stating because all three were previously violated:
 
 * **The threshold is chosen on validation, not on test.** Choosing it on the
   same rows the headline metrics come from makes those metrics a description of
   the selection procedure (audit B04).
+* **Calibration is applied, not only measured.** The old run drew a calibration
+  curve and then threw the correction away, so the reported Brier score
+  described a model nobody would have shipped (audit B05).
 * **Feature engineering is not done here.** It happens inside the fitted
   ``Pipeline``, so the artifact this writes is self-contained and ``POST
   /predict`` cannot preprocess a request differently from how the model was fit.
@@ -22,12 +25,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import joblib
 import pandas as pd
-from sklearn.pipeline import Pipeline
 
-from risk_score.calibration import compute_calibration_curve, plot_calibration_curve
+from risk_score.calibration import (
+    build_calibration_report,
+    fit_calibrator,
+    plot_calibration_curve,
+)
 from risk_score.config import RunConfig
 from risk_score.data_loading import create_default_target, load_lending_club_data
 from risk_score.evaluation import (
@@ -45,9 +52,15 @@ from risk_score.modeling import SUPPORTED_MODEL_TYPES, split_by_time, train_mode
 from risk_score.transformers import build_feature_spec
 
 
-def _predict_default_probability(model: Pipeline, features: pd.DataFrame) -> pd.Series:
-    """Positive-class default probabilities, indexed like the input frame."""
-    probabilities = model.predict_proba(features)[:, 1]
+def _predict_default_probability(estimator: Any, features: pd.DataFrame) -> pd.Series:
+    """Positive-class default probabilities, indexed like the input frame.
+
+    Takes any fitted estimator with ``predict_proba``, because the same call is
+    made against the raw ``Pipeline`` and against the ``CalibratedClassifierCV``
+    that wraps it - and both accept the same *raw* frame, since canonicalization
+    is the pipeline's first step.
+    """
+    probabilities = estimator.predict_proba(features)[:, 1]
     return pd.Series(probabilities, index=features.index, name="default_probability")
 
 
@@ -122,13 +135,29 @@ def run_baseline_pipeline(
     # allowed to see: the logistic baseline gets train only, XGBoost additionally
     # monitors validation to stop boosting early.
     model = train_model(model_type, split, spec=spec, config=config.model_params(model_type))
-    joblib.dump(model, models_path / f"{model_type}.joblib")
 
-    # --- 1. the decision rule, chosen on validation only ------------------------
-    scores_validation = _predict_default_probability(model, split.x_validation)
-    # The wrapper is the point: `select_threshold_by_cost` will not accept bare
-    # arrays, so the partition a fitted decision came from is stated at the call
+    # --- 1. the probability correction, fitted on validation only ---------------
+    # `split.validation` rather than two frames: `fit_calibrator` accepts only the
+    # wrapper, so the partition a fitted object came from is stated at the call
     # site rather than assumed.
+    calibrator = fit_calibrator(model, split.validation)
+    # Two files, and they cannot drift: the calibrator holds this exact `model`
+    # object by reference inside its FrozenEstimator, so the pickle contains both.
+    # The bare pipeline is written too because it is the only way to inspect the
+    # fitted preprocessing without unwrapping a calibrator.
+    joblib.dump(model, models_path / f"{model_type}.joblib")
+    joblib.dump(calibrator, models_path / f"{model_type}_calibrator.joblib")
+
+    # --- 2. the decision rule, chosen on validation only ------------------------
+    # Scored through the calibrator, because that is what serving compares to the
+    # threshold. A threshold picked on uncalibrated scores and then applied to
+    # calibrated ones is a different policy than the one that was costed.
+    #
+    # Known limit: the calibrator was fitted on these same rows, so the validation
+    # cost table is mildly optimistic. Reported anyway rather than silently split
+    # a fourth partition off a dataset this size; the honest number is the test
+    # one below, which the calibrator never saw.
+    scores_validation = _predict_default_probability(calibrator, split.x_validation)
     threshold = select_threshold_by_cost(
         ValidationScores(y_true=split.y_validation, y_score=scores_validation),
         cost_matrix=cost_matrix,
@@ -142,8 +171,12 @@ def run_baseline_pipeline(
     # raising IndexError on `.iloc[0]` of an empty selection (audit B11).
     selected = threshold_costs.loc[threshold_costs["threshold"].sub(threshold).abs().idxmin()]
 
-    # --- 2. test is scored once, and only reported ------------------------------
-    scores_test = _predict_default_probability(model, split.x_test)
+    # --- 3. test is scored once, and only reported ------------------------------
+    scores_test = _predict_default_probability(calibrator, split.x_test)
+    # The uncalibrated score is kept for one number only: the Brier score the
+    # correction was supposed to improve. Reporting the calibrated Brier without
+    # it makes the calibration step unfalsifiable.
+    scores_test_raw = _predict_default_probability(model, split.x_test)
     metrics = ClassificationMetrics(
         auc_roc=compute_auc_roc(split.y_test, scores_test),
         average_precision=compute_average_precision(split.y_test, scores_test),
@@ -156,11 +189,25 @@ def run_baseline_pipeline(
         approval_rate=float((scores_test < threshold).mean()),
     )
 
+    calibration_test = build_calibration_report(split.y_test, scores_test)
+    calibration_validation = build_calibration_report(split.y_validation, scores_validation)
+
     metrics_payload = {
         "auc_roc": metrics.auc_roc,
         "average_precision": metrics.average_precision,
         "ks_statistic": metrics.ks_statistic,
         "brier_score": metrics.brier_score,
+        # The pair that says whether calibrating helped. If the calibrated number
+        # is not lower, the correction is not earning its place in the artifact.
+        "brier_score_uncalibrated": compute_brier_score(split.y_test, scores_test_raw),
+        "expected_calibration_error": calibration_test.expected_calibration_error,
+        # In-sample for the calibrator, and labelled as such: it is the floor the
+        # test number should be compared against, not a second result.
+        "expected_calibration_error_validation_in_sample": (
+            calibration_validation.expected_calibration_error
+        ),
+        "calibration_method": calibrator.method,
+        "calibration_fitted_on": "validation",
         "default_rate": metrics.default_rate,
         "approval_rate": metrics.approval_rate,
         "selected_threshold": threshold,
@@ -184,12 +231,11 @@ def run_baseline_pipeline(
         encoding="utf-8",
     )
 
-    calibration_data = compute_calibration_curve(split.y_test, scores_test)
-    calibration_data.to_csv(metrics_path / f"{model_type}_calibration.csv", index=False)
+    calibration_test.curve.to_csv(metrics_path / f"{model_type}_calibration.csv", index=False)
     threshold_costs.to_csv(metrics_path / f"{model_type}_threshold_costs.csv", index=False)
     plot_calibration_curve(
-        calibration_data,
-        output_path=str(figures_path / f"{model_type}_calibration.png"),
+        calibration_test.curve,
+        output_path=figures_path / f"{model_type}_calibration.png",
     )
 
     return metrics

@@ -17,7 +17,8 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import pytest
-from sklearn.metrics import roc_auc_score
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.pipeline import Pipeline
 
 from risk_score.config import RunConfig, SplitConfig
@@ -79,13 +80,28 @@ def rebuild_split(raw_path: Path) -> TimeSplit:
 
 
 def load_model(output_dir: Path, model_type: str = "logistic_regression") -> Pipeline:
-    """The artifact the run wrote, loaded the way a serving process would."""
+    """The bare fitted pipeline, for inspecting the preprocessing it carries."""
     model: Pipeline = joblib.load(output_dir / "models" / f"{model_type}.joblib")
     return model
 
 
-def score(model: Pipeline, features: pd.DataFrame) -> npt.NDArray[np.float64]:
-    return np.asarray(model.predict_proba(features)[:, 1], dtype=np.float64)
+def load_calibrator(
+    output_dir: Path, model_type: str = "logistic_regression"
+) -> CalibratedClassifierCV:
+    """The artifact a serving process actually scores with.
+
+    This, not ``load_model``, is what the reported numbers come from: the run
+    calibrates on validation and applies the correction, so the pipeline alone
+    produces different probabilities and a different threshold (audit B05).
+    """
+    calibrator: CalibratedClassifierCV = joblib.load(
+        output_dir / "models" / f"{model_type}_calibrator.joblib"
+    )
+    return calibrator
+
+
+def score(estimator: Any, features: pd.DataFrame) -> npt.NDArray[np.float64]:
+    return np.asarray(estimator.predict_proba(features)[:, 1], dtype=np.float64)
 
 
 def read_metrics(output_dir: Path, model_type: str = "logistic_regression") -> dict[str, Any]:
@@ -104,6 +120,7 @@ def test_the_pipeline_writes_every_documented_artifact(raw_csv: Path, tmp_path: 
         "metrics/logistic_regression_threshold_costs.csv",
         "figures/logistic_regression_calibration.png",
         "models/logistic_regression.joblib",
+        "models/logistic_regression_calibrator.joblib",
     ):
         assert (output_dir / relative).exists(), relative
 
@@ -111,12 +128,12 @@ def test_the_pipeline_writes_every_documented_artifact(raw_csv: Path, tmp_path: 
 def test_the_reported_metrics_are_the_test_partitions_own_numbers(
     raw_csv: Path, tmp_path: Path
 ) -> None:
-    """Recomputed from the persisted model rather than read back from the run."""
+    """Recomputed from the persisted artifacts rather than read back from the run."""
     output_dir = tmp_path / "reports"
     metrics = run(raw_csv, output_dir)
 
     split = rebuild_split(raw_csv)
-    scores_test = score(load_model(output_dir), split.x_test)
+    scores_test = score(load_calibrator(output_dir), split.x_test)
 
     assert metrics.auc_roc == pytest.approx(roc_auc_score(split.y_test, scores_test), rel=1e-12)
     assert metrics.default_rate == pytest.approx(float(split.y_test.mean()), rel=1e-12)
@@ -134,8 +151,13 @@ def test_b04_the_threshold_is_selected_on_validation_not_on_test(
     payload = read_metrics(output_dir)
 
     split = rebuild_split(raw_csv)
-    model = load_model(output_dir)
-    scores_validation = pd.Series(score(model, split.x_validation), index=split.x_validation.index)
+    # Through the calibrator, because that is what the served decision compares
+    # to the threshold - selecting on uncalibrated scores would cost one policy
+    # and then apply a different one.
+    calibrator = load_calibrator(output_dir)
+    scores_validation = pd.Series(
+        score(calibrator, split.x_validation), index=split.x_validation.index
+    )
     expected = select_threshold_by_cost(
         ValidationScores(y_true=split.y_validation, y_score=scores_validation),
         cost_matrix=COSTS,
@@ -143,6 +165,51 @@ def test_b04_the_threshold_is_selected_on_validation_not_on_test(
 
     assert payload["selected_threshold"] == expected
     assert payload["threshold_selected_on"] == "validation"
+
+
+def test_b05_the_calibration_correction_is_applied_and_not_merely_drawn(
+    raw_csv: Path, tmp_path: Path
+) -> None:
+    """The old run measured calibration and discarded it, so every reported
+    probability came from a model nobody would have shipped.
+
+    Two things are asserted: the correction changes the probabilities at all, and
+    the Brier score in the metrics file is the corrected one rather than the raw
+    model's.
+    """
+    output_dir = tmp_path / "reports"
+    metrics = run(raw_csv, output_dir)
+    payload = read_metrics(output_dir)
+
+    split = rebuild_split(raw_csv)
+    raw_scores = score(load_model(output_dir), split.x_test)
+    calibrated_scores = score(load_calibrator(output_dir), split.x_test)
+
+    assert not np.allclose(raw_scores, calibrated_scores)
+    assert metrics.brier_score == pytest.approx(
+        brier_score_loss(split.y_test, calibrated_scores), rel=1e-12
+    )
+    assert payload["brier_score_uncalibrated"] == pytest.approx(
+        brier_score_loss(split.y_test, raw_scores), rel=1e-12
+    )
+    assert payload["calibration_fitted_on"] == "validation"
+    # Few positives in a synthetic extract this size, so Platt scaling - the
+    # fallback that cannot memorize the calibration partition.
+    assert payload["calibration_method"] == "sigmoid"
+
+
+def test_the_calibration_curve_carries_the_bin_sizes(raw_csv: Path, tmp_path: Path) -> None:
+    """A point built from four loans is drawn like one built from four thousand
+    unless the count travels with it."""
+    output_dir = tmp_path / "reports"
+    run(raw_csv, output_dir)
+
+    curve = pd.read_csv(output_dir / "metrics" / "logistic_regression_calibration.csv")
+    split = rebuild_split(raw_csv)
+
+    assert "rows" in curve.columns
+    assert curve["rows"].sum() == len(split.y_test)
+    assert (curve["rows"] > 0).all()
 
 
 def test_the_approval_rate_is_measured_on_the_population_being_scored(
@@ -153,7 +220,7 @@ def test_the_approval_rate_is_measured_on_the_population_being_scored(
     metrics = run(raw_csv, output_dir)
 
     split = rebuild_split(raw_csv)
-    scores_test = score(load_model(output_dir), split.x_test)
+    scores_test = score(load_calibrator(output_dir), split.x_test)
     threshold = read_metrics(output_dir)["selected_threshold"]
 
     assert metrics.approval_rate == pytest.approx(
@@ -218,7 +285,7 @@ def test_the_persisted_model_scores_a_single_raw_applicant(
     output_dir = tmp_path / "reports"
     run(raw_csv, output_dir)
 
-    probability = score(load_model(output_dir), raw_loans.iloc[[0]])[0]
+    probability = score(load_calibrator(output_dir), raw_loans.iloc[[0]])[0]
     assert 0.0 < probability < 1.0
 
 

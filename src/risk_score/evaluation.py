@@ -143,10 +143,13 @@ class ValidationScores:
             raise ValueError("Labels and scores must share an index.")
 
 
-def _as_arrays(
+def as_metric_arrays(
     y_true: pd.Series, y_score: pd.Series
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.float64]]:
     """Validate one label/score pair and hand back plain numpy arrays.
+
+    Public, and shared with :mod:`risk_score.calibration`, because every number
+    this project reports about a partition should have been through the same door.
 
     Every metric in this module starts here, so the guards are stated once. They
     all describe conditions under which a metric would still return a number:
@@ -175,7 +178,7 @@ def _as_arrays(
 
 def compute_auc_roc(y_true: pd.Series, y_score: pd.Series) -> float:
     """Area under the ROC curve: the probability a random default outranks a random non-default."""
-    labels, scores = _as_arrays(y_true, y_score)
+    labels, scores = as_metric_arrays(y_true, y_score)
     _require_both_classes(labels, "AUC-ROC")
     return float(roc_auc_score(labels, scores))
 
@@ -188,7 +191,7 @@ def compute_average_precision(y_true: pd.Series, y_score: pd.Series) -> float:
     one scalar out of a column repeated on every row of it, which is both slower
     and an invitation to read row 7 by mistake.
     """
-    labels, scores = _as_arrays(y_true, y_score)
+    labels, scores = as_metric_arrays(y_true, y_score)
     _require_both_classes(labels, "average precision")
     return float(average_precision_score(labels, scores))
 
@@ -200,7 +203,7 @@ def compute_brier_score(y_true: pd.Series, y_score: pd.Series) -> float:
     model whose ordering is fine and whose probabilities are inflated, which is
     exactly what ``class_weight="balanced"`` used to produce (audit B05).
     """
-    labels, scores = _as_arrays(y_true, y_score)
+    labels, scores = as_metric_arrays(y_true, y_score)
     return float(brier_score_loss(labels, scores))
 
 
@@ -211,7 +214,7 @@ def compute_precision_recall(y_true: pd.Series, y_score: pd.Series) -> pd.DataFr
     point is recall 0, precision 1, which no threshold produces - so the
     threshold column ends in NaN rather than being silently truncated to match.
     """
-    labels, scores = _as_arrays(y_true, y_score)
+    labels, scores = as_metric_arrays(y_true, y_score)
     _require_both_classes(labels, "a precision-recall curve")
     precision, recall, thresholds = sklearn_precision_recall_curve(labels, scores)
     return pd.DataFrame(
@@ -259,7 +262,7 @@ def compute_ks_statistic(y_true: pd.Series, y_score: pd.Series) -> float:
     Never returns a negative number: the two cumulative curves both end at 1, so
     their difference is 0 at the final threshold and the maximum is at least that.
     """
-    labels, scores = _as_arrays(y_true, y_score)
+    labels, scores = as_metric_arrays(y_true, y_score)
     _require_both_classes(labels, "The KS statistic")
 
     # Descending, because a credit score's operating points run from "decline
@@ -302,7 +305,7 @@ def compute_threshold_cost_table(
     (audit P03). On 400k validation rows and 99 thresholds that is one pass
     instead of ninety-nine.
     """
-    labels, scores = _as_arrays(y_true, y_score)
+    labels, scores = as_metric_arrays(y_true, y_score)
     grid = np.asarray(
         DEFAULT_THRESHOLD_GRID if thresholds is None else thresholds, dtype=np.float64
     )

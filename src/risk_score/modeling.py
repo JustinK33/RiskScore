@@ -148,6 +148,25 @@ def _end_of_period(value: str | pd.Timestamp) -> pd.Timestamp:
     return pd.Period(str(value)).end_time
 
 
+@dataclass(frozen=True, slots=True)
+class ValidationPartition:
+    """The validation rows, wrapped so nothing else can be handed to a fitter.
+
+    The calibrator is fitted, and it is fitted on validation only - see
+    ``docs/decisions/0003-train-validation-test-split.md``. A function taking
+    ``x`` and ``y`` cannot tell which partition it got; a function taking this
+    can only be given the wrong one on purpose.
+
+    :class:`risk_score.evaluation.ValidationScores` is the same idea for
+    already-computed scores. Two types rather than one because the calibrator
+    needs the features - it re-scores them through the frozen model - and the
+    threshold search needs only the scores.
+    """
+
+    x: pd.DataFrame
+    y: pd.Series
+
+
 @dataclass(frozen=True)
 class TimeSplit:
     """Three partitions, plus a full account of every row that reached none of them.
@@ -173,6 +192,11 @@ class TimeSplit:
     def rows_out(self) -> int:
         """Rows that landed in some partition."""
         return len(self.x_train) + len(self.x_validation) + len(self.x_test)
+
+    @property
+    def validation(self) -> ValidationPartition:
+        """The validation rows in the wrapper that fitted decisions require."""
+        return ValidationPartition(x=self.x_validation, y=self.y_validation)
 
     def summary(self) -> str:
         """One-line summary for logs and the run manifest."""
