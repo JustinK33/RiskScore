@@ -15,6 +15,8 @@ The row-restriction job is the subtle one, and it is where this project's most d
 | `read_raw_loans(path, ...)` | Read a CSV or parquet file with the read projected to registered columns, then canonicalize. Returns `(frame, SchemaReport)`. |
 | `filter_to_closed_loans(loans, ...)` | Keep terminal statuses. Necessary, not sufficient. |
 | `apply_outcome_maturity_embargo(loans, *, snapshot, ...)` | Keep loans whose full term elapsed by the snapshot. Returns an `EmbargoResult`. |
+| `filter_to_terms(loans, *, terms, ...)` | Keep only the listed term lengths. An empty `terms` keeps all. |
+| `term_months(loans, ...)` | `' 36 months'` to a nullable `36`, for the two functions above. |
 | `create_default_target(loans, ...)` | Status to `Int64` label. Returns a Series. |
 | `load_lending_club_data(path, ...)` | Read plus status filter, for callers that do not need the report. |
 | `EmbargoResult` | The kept frame plus per-vintage rates before and after, and removed-row counts. |
@@ -26,8 +28,9 @@ In: a path to a Lending Club CSV or a parquet file this project wrote, and a sna
 
 Out: DataFrames and a label Series, plus two report objects (`SchemaReport`, `EmbargoResult`) whose contents are destined for the run manifest.
 
-The snapshot has no default.
-It cannot be inferred from the data - the latest `issue_d` is a lower bound on the snapshot, not the snapshot itself - and getting it wrong in the optimistic direction reintroduces exactly the bias the embargo removes.
+Nothing here has an opinion about the snapshot's value.
+`apply_outcome_maturity_embargo` requires it as a keyword argument with no default, because it cannot be inferred from the data - the latest `issue_d` is a lower bound on the snapshot, not the snapshot itself.
+The shipped value lives in `config.DEFAULT_SNAPSHOT` and reaches this module as an argument, which is the same separation every other tunable in the project has.
 
 ## Invariants and failure modes
 
@@ -68,6 +71,16 @@ Guards, each of which produces a specific error rather than a pandas internal on
 Rows whose date or term did not parse are removed and counted as `rows_unknown_maturity`, separately from `rows_immature`.
 "Corrupt" and "still running" are different problems with different fixes, and a single combined count would hide whichever is smaller.
 
+### The term filter exists because of the embargo
+
+`filter_to_terms` is not an independent option, and reading it as one leads to turning it off.
+Once immature loans are gone, 60-month loans survive only in the earliest vintages - 28% of the 2013 rows in the synthetic extract, 0% of 2015's - so an unrestricted run trains on a term mix that validation and test do not contain.
+
+Two details are decisions rather than defaults:
+
+- An empty `terms` returns the frame **unchanged**, not empty. `term_months_in: []` in a config reads naturally as "no restriction", and an empty allow-list interpreted as a filter would silently empty the run.
+- Rows whose term does not parse are dropped, matching the embargo. A loan that cannot be shown to be in scope is not in scope.
+
 ### Constants are immutable
 
 `CLOSED_LOAN_STATUSES` is a `frozenset` because it is a default argument value.
@@ -88,9 +101,13 @@ Named audit regressions: `test_b02_a_frame_with_both_loan_amnt_and_funded_amnt_y
 
 The embargo's load-bearing test is `test_embargo_removes_the_survivorship_bias_in_a_closed_loan_filter`, which runs against the synthetic generator specifically because the generator reproduces the bias by censoring default timing against a snapshot - the same mechanism as the real data, rather than a hard-coded biased label distribution.
 
+Whether a *run* applies the embargo is tested one level up, in `tests/test_pipeline.py`, because for the whole of this project's history until now the answer was no: the function was written, documented, and tested, and `pipeline.py` did not call it.
+`test_the_maturity_embargo_runs_and_flattens_the_vintage_default_rate` and `test_immature_loans_never_reach_any_partition` are the tests that would have caught that.
+
 ## Known limits
 
 - The embargo discards censored loans rather than modelling them. A loan 18 months into a 36-month term carries real information that survival analysis could use. That is the right next step and it changes the deliverable from a probability to a hazard function, so it is out of scope here.
 - The parquet branch does not project columns. It is only used for this project's own cache files, which are already projected.
 - `read_raw_loans` opens the CSV twice. The header read is negligible, but it does mean the file must be seekable - not a stream.
-- `term` is parsed here by digit extraction *and* in `feature_engineering.parse_term_months`. The duplication is deliberate: the embargo runs before feature engineering and must not depend on it. If a third parser appears, they should be consolidated.
+- `term` is parsed here by digit extraction *and* in `feature_engineering.parse_term_months`. The duplication is deliberate: the embargo runs before feature engineering and must not depend on it. Within this module there is one parser, `term_months`, shared by the embargo and the term filter. If a third appears, they should be consolidated.
+- **A wrong snapshot is detectable but not detected.** Setting it later than the true pull date readmits immature loans, and the signature is a residual climb in `EmbargoResult.default_rate_after`. Nothing here inspects that; the numbers are published and a human reads them.

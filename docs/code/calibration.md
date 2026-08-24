@@ -99,8 +99,15 @@ The curve calls `risk_score.evaluation.as_metric_arrays`, so an empty partition,
 **The plot is legible about sample size.**
 Bin size is encoded as marker area rather than a per-point text label.
 The labels were tried and were unreadable in practice: quantile bins are equal-sized, so all ten read `n=35`, and the ones in the crowded bottom-left corner where a credit model puts most of its mass overlapped each other.
-Area still distinguishes the collapsed bins that a tie-heavy score produces, which is the case a count is for, and a subtitle states the range outright.
-Axis limits are fixed to `(0, 1)` with an equal aspect, so the reference line is drawn at a true 45 degrees; on autoscaled axes it is not, and the eye reads distance from that line as the size of the miscalibration.
+`_marker_sizes` therefore scales area *only* when the largest bin is at least twice the smallest, which is the tie-heavy tree-score case a count is actually for.
+Otherwise the counts differ by a single row, every marker would be drawn near-maximal, and the subtitle would promise "area proportional to count" about a difference of one loan.
+The range is stated outright either way.
+
+**The axis window is square and sized to the book, not to `(0, 1)`.**
+`_axis_extent` returns one number used for both limits.
+One number, because the window has to stay square or the perfect-calibration reference line is no longer at 45 degrees, and the whole chart is read as distance from that line.
+Sized to the data, because a portfolio at a 15% base rate has its entire curve below 0.2, and a `(0, 1)` window spends most of the figure on probabilities no loan has while compressing the informative part into a corner - measured at 27% of the figure's width on the shipped run before this changed.
+The extent is the largest predicted or observed rate plus 15% headroom, rounded up to a tenth so the tick labels stay round, floored at 0.2 so a well-calibrated low-risk book does not read as a zoom artifact, and capped at 1.0.
 
 ## What must NOT live here
 
@@ -112,7 +119,7 @@ Axis limits are fixed to `(0, 1)` with an equal aspect, so the reference line is
 
 ## Related tests
 
-`tests/test_calibration.py`, 21 tests.
+`tests/test_calibration.py`, 24 tests.
 The old module had none, which is how a function with a removed keyword argument sat in the repository looking fine.
 
 - `test_the_curve_is_a_hand_computable_table_on_a_small_frame` pins the whole output against four rows worked out by hand.
@@ -124,6 +131,8 @@ The old module had none, which is how a function with a removed keyword argument
 - `test_calibrating_a_deliberately_inflated_model_lowers_its_brier_score` builds a `class_weight="balanced"` model, the exact failure of audit B05, and asserts the correction improves the held-out Brier score. A calibration step that does not is not doing its job.
 - `test_b05_the_calibration_correction_is_applied_and_not_merely_drawn` (in `test_pipeline.py`) asserts the reported Brier score is the calibrated one, by recomputing both from the two persisted artifacts.
 - `test_bare_frames_are_refused_by_the_calibrator` is the partition guard.
+- `test_the_axes_are_scaled_to_the_book_and_stay_square` and `test_marker_area_encodes_the_count_only_when_the_bins_are_uneven` test `_axis_extent` and `_marker_sizes` directly. They are private, and testing them through the PNG is the reason the first version of the marker test asserted nothing at all: a written file proves a figure was produced, not that anything on it is readable. Pulling both rules out as pure functions is what made them assertable.
+- `test_a_curve_with_no_rows_does_not_crash_the_axis_scaling` covers the reduction over an empty array, which would otherwise raise before any message about the empty curve.
 - `test_the_plot_writes_a_file_and_leaves_no_open_figure` and `test_the_plot_closes_the_figure_even_when_saving_fails` cover audit B26, counting `plt.get_fignums()` before and after.
 - `test_the_plot_does_not_reach_into_the_environment` asserts `MPLCONFIGDIR` is absent afterwards.
 
@@ -132,5 +141,6 @@ The old module had none, which is how a function with a removed keyword argument
 - **The calibrator is fitted on the same rows the threshold is selected on,** so the validation cost table is mildly optimistic. The pipeline reports the in-sample validation ECE beside the test ECE rather than passing one off as the other, and the honest number is the test one. Carving out a fourth partition is the clean fix and is not worth it at this dataset size; the reasoning is in [ADR 0006](../decisions/0006-calibration-on-validation.md).
 - **Calibration is fitted once, on one vintage window.** A calibration map fitted on 2015 loans is applied to 2016 applicants, and the level is the part of a credit model that drifts first. The PSI work in Phase 5 is what detects it; nothing here recalibrates automatically.
 - **The ECE depends on the bin count.** Ten quantile bins is a convention, not a property of the data, and the same model reports a different ECE at 20 bins. It is comparable across runs of this project and not across papers.
+- **The figure's legibility is only tested one rule at a time.** Nothing asserts anything about the rendered pixels; `_axis_extent` and `_marker_sizes` are checked as functions and the PNG is checked for existence. Both defects they fix were found by a human looking at the image, and the next one will be too.
 - **No confidence band on the curve.** Each point is a raw observed rate, so with 35 loans per bin a swing of 0.1 is unremarkable noise and the chart does not say so. A binomial interval per point is the fix.
 - **`choose_calibration_method` counts positives, not effective sample size.** A partition with 300 defaults concentrated in two score bands supports isotonic far less well than 300 spread evenly, and the constant cannot see the difference.

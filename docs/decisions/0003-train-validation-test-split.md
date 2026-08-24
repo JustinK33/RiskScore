@@ -53,7 +53,7 @@ Concretely:
 - The threshold is selected on validation and *measured* on test. The approval rate reported is test's own, because the approval rate a lender sees is a property of the population being scored, not of the population the rule was tuned on.
 - The threshold is persisted **inside the model bundle**, alongside the pipeline and the calibrator, so the three cannot be mismatched by loading them separately.
 - XGBoost's early stopping is the one thing besides reporting that touches validation, and it touches it through `transform`, never `fit_transform`.
-- Defaults: train `2013-01`..`2014-12`, validation `2015-01`..`2015-12`, test `2016-01`..`2016-12`, all subject to the outcome-maturity embargo applied *before* the split so all three partitions share one outcome definition (see [0004](0004-outcome-maturity-embargo.md)).
+- Defaults: train `2013-01`..`2014-09`, validation `2014-10`..`2015-03`, test `2015-04`..`2015-12`, all subject to the outcome-maturity embargo applied *before* the split so all three partitions share one outcome definition (see [0004](0004-outcome-maturity-embargo.md)).
 
 ## Consequences
 
@@ -72,6 +72,11 @@ A convention that lives only in a docstring is a convention that gets violated d
 
 **Three windows mean three chances to misconfigure.**
 Mitigated by making the failure modes loud: overlap raises and names both boundaries, an empty partition raises and reports the observed date range, and unknown keys in the `split` config section raise rather than falling back to a default (audit B30).
+
+**The windows are not independent of `data.snapshot`.**
+They cover a calendar the embargo has already truncated, so under the shipped `2018-12-01` snapshot nothing issued after 2015-12 exists and the originally shipped test window of `2016-01`..`2016-12` would raise as an empty partition.
+The default windows above were moved together with the snapshot for that reason, and `DEFAULT_SNAPSHOT` sits beside `DEFAULT_SPLIT_WINDOWS` in `config.py` with a comment saying so.
+The coupling is documented rather than enforced: the error `split_by_time` already raises names the requested windows, the observed span, and the per-partition row counts, which is enough to diagnose it, and a load-time check would have to reimplement the embargo to do better.
 
 **Reproducibility now depends on recorded windows.**
 The resolved window labels go in the manifest, in `TimeSplit.summary()`, and in the model card, because a metric without its evaluation period is not comparable to anything.

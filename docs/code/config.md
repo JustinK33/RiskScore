@@ -22,7 +22,7 @@ Phase 1 added a minimum alias length precisely because a one-letter alias silent
 Nothing tested the config files, because there was nothing to test: they were dicts.
 
 So the three files are gone, replaced by one that is parsed into frozen dataclasses.
-What remains configurable is what a run legitimately varies: split windows, model hyperparameters, the cost matrix, the feature tier, and an alias escape hatch for onboarding an unfamiliar extract without a code change.
+What remains configurable is what a run legitimately varies: the extract's snapshot and admissible loan terms, the split windows, model hyperparameters, the cost matrix, the feature tier, and an alias escape hatch for onboarding an unfamiliar extract without a code change.
 
 ## Public API
 
@@ -33,9 +33,12 @@ What remains configurable is what a run legitimately varies: split windows, mode
 | `RunConfig.model_params(model_type)` | Hyperparameter overrides for one model, as a fresh dict. |
 | `SplitConfig` | `date_column` plus the three `(start, end)` windows. |
 | `SplitConfig.from_mapping(mapping)` | Same contract, for the `split` section. |
+| `DataConfig` | Which rows are admissible at all: `snapshot` and `term_months_in`. |
+| `DataConfig.from_mapping(mapping)` | Same contract, for the `data` section. |
 | `load_run_config(path)` | Read and validate a config file. This is what callers use. |
 | `load_yaml_config(path)` | Read a YAML document as a mapping. No interpretation, no defaults. |
 | `DEFAULT_SPLIT_WINDOWS` | The shipped windows, so the YAML only has to state what it changes. |
+| `DEFAULT_SNAPSHOT`, `DEFAULT_TERM_MONTHS` | The shipped extract description. Coupled to the windows above; see below. |
 
 ## Inputs and outputs
 
@@ -54,11 +57,24 @@ It is handed straight to an estimator constructor, and a caller mutating it must
 
 ### Unknown keys raise, and the message lists the valid ones
 
-`_reject_unknown_keys` runs on the document and on every section: `split`, `threshold`, `leakage`.
+`_reject_unknown_keys` runs on the document and on every section: `data`, `split`, `threshold`, `leakage`.
 `spilt:` at the top level fails with `Unknown key(s) in 'config': ['spilt']. Valid keys: [...]`.
 
 The valid-key list is in the message on purpose.
 "Unknown key" alone sends the reader to the source to find out what they should have typed, and at that point the error has cost more than the typo.
+
+### `data` describes the extract; `split` describes the experiment
+
+Two sections rather than one, because they answer different questions and are edited for different reasons.
+`data.snapshot` and `data.term_months_in` say which rows have a knowable outcome - a property of the file, true no matter what anyone trains on it.
+`split` says how the admissible rows are divided.
+
+They are nonetheless **coupled in one direction**: the windows are downstream of the snapshot.
+Under `2018-12-01` with 36-month terms, nothing issued after 2015-12 survives the embargo, so the previously shipped test window of `2016-01`..`2016-12` would be empty and `split_by_time` would raise.
+`DEFAULT_SNAPSHOT` and `DEFAULT_SPLIT_WINDOWS` sit next to each other in the source with a comment saying so, because the failure mode is a config file that moves one of them.
+
+`term_months_in: []` means every term, not no terms.
+Neither reading is obviously right, so the one that cannot silently empty a run wins, and `test_an_omitted_term_list_means_every_term` pins it.
 
 ### Hyperparameter names are deliberately *not* validated
 
@@ -107,7 +123,8 @@ Two sources of one default is one source too many; that test is what keeps them 
 
 `tests/test_config.py`.
 
-Named audit regressions: `test_b30_an_unknown_top_level_key_is_rejected`, `test_b30_an_unknown_split_key_is_rejected`, `test_b30_an_unknown_threshold_key_is_rejected`.
+Named audit regressions: `test_b30_an_unknown_top_level_key_is_rejected`, `test_b30_an_unknown_split_key_is_rejected`, `test_b30_an_unknown_threshold_key_is_rejected`, `test_b30_an_unknown_data_key_is_rejected`.
+The last one exists because `snapshot_date:` instead of `snapshot:` is both the easiest misspelling to make here and the most damaging: a silently defaulted snapshot set too late readmits the censored vintages the embargo removes.
 
 The two worth reading for intent are `test_the_error_lists_the_keys_that_would_have_worked` - the message is part of the contract - and `test_load_yaml_config_refuses_to_construct_arbitrary_objects`.
 
@@ -119,4 +136,6 @@ The two worth reading for intent are `test_the_error_lists_the_keys_that_would_h
 - **Window ordering is not checked at load time.** A config whose test window precedes its train window passes validation and fails in `split_by_time`. The error there is clearer - it can name the actual dates and the overlap - so the check stays where the information is.
 - **`date_column` is a free string.** Naming a column that does not exist is caught by `split_by_time` with a `KeyError` listing what was present, not here.
 - **No environment-variable overlay and no config inheritance.** One file, read once. Both are easy to add and neither has been needed; a run that wants different windows copies the file and passes `--config`.
+- **Nothing checks the snapshot against the data.** It cannot be inferred - the latest `issue_d` is a lower bound on the snapshot, not the snapshot - so a value that is too late is accepted here and shows up only as a residual climb in `default_rate_by_vintage_after_embargo` in the metrics payload. See [ADR 0004](../decisions/0004-outcome-maturity-embargo.md).
+- **The window/snapshot coupling is documented, not enforced.** Changing `data.snapshot` without moving the windows raises in `split_by_time`, which names the dates and the row counts. That is a decent error to land on, and a load-time check would have to reimplement the embargo to do better.
 - **`column_aliases` is an escape hatch, and escape hatches drift.** An alias that belongs to every extract belongs in `features.py`. Nothing enforces that distinction, which is why the key is documented as onboarding-only.
