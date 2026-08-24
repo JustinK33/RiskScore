@@ -3,13 +3,20 @@
 This module holds no logic of its own beyond ordering, and the order is the
 point (see ``docs/architecture.md``)::
 
-    raw -> label -> leakage audit -> feature spec -> tri-split
+    raw -> closed statuses -> maturity embargo -> term filter -> label
+        -> leakage audit -> feature spec -> tri-split
       TRAIN      fit the pipeline. Nothing else.
       VALIDATION fit the calibrator, then select the decision threshold.
       TEST       score once, report, never fit anything.
 
-Three properties are worth stating because all three were previously violated:
+Every row filter sits left of the split, so all three partitions share one
+outcome definition. Four properties are worth stating because all four were
+previously violated:
 
+* **Immature loans are removed before anything else.** Filtering to closed
+  statuses alone keeps young loans only when they defaulted, which inflates the
+  label for exactly the most recent vintages - the ones a time split reports on.
+  The run records the per-vintage default rate before and after the correction.
 * **The threshold is chosen on validation, not on test.** Choosing it on the
   same rows the headline metrics come from makes those metrics a description of
   the selection procedure (audit B04).
@@ -36,7 +43,12 @@ from risk_score.calibration import (
     plot_calibration_curve,
 )
 from risk_score.config import RunConfig
-from risk_score.data_loading import create_default_target, load_lending_club_data
+from risk_score.data_loading import (
+    apply_outcome_maturity_embargo,
+    create_default_target,
+    filter_to_terms,
+    load_lending_club_data,
+)
 from risk_score.evaluation import (
     ClassificationMetrics,
     ValidationScores,
@@ -102,10 +114,28 @@ def run_baseline_pipeline(
     cost_matrix = config.cost_matrix
     include_lender_priced = config.include_lender_priced
     date_column = config.split.date_column
+
+    # --- 1. which rows are admissible at all ------------------------------------
+    # Every row filter happens here, before the split, so all three partitions
+    # share one outcome definition. A filter applied per partition is how two
+    # partitions end up answering different questions (see modeling.py's "What
+    # must NOT live here").
     loans = load_lending_club_data(
         raw_data_path,
         column_aliases=config.column_aliases or None,
     )
+    # The correction this project exists to demonstrate. "Closed" is measured
+    # against the extract's snapshot, so a loan too young to have finished paying
+    # can only be closed by having defaulted - and the resulting bias grows with
+    # vintage, which reads as credit-quality drift. The embargo keeps only loans
+    # whose full term had elapsed by the snapshot.
+    embargo = apply_outcome_maturity_embargo(
+        loans, snapshot=config.data.snapshot, date_column=date_column
+    )
+    # Downstream of the embargo, not an independent choice: 60-month loans survive
+    # it only in the earliest vintages, so training on them and never seeing one
+    # in validation or test is a term-mix cliff, not extra data.
+    loans = filter_to_terms(embargo.loans, terms=config.data.term_months_in)
     loans = loans.assign(default_flag=create_default_target(loans))
     loans = loans.dropna(subset=["default_flag"])
 
@@ -136,7 +166,7 @@ def run_baseline_pipeline(
     # monitors validation to stop boosting early.
     model = train_model(model_type, split, spec=spec, config=config.model_params(model_type))
 
-    # --- 1. the probability correction, fitted on validation only ---------------
+    # --- 2. the probability correction, fitted on validation only ---------------
     # `split.validation` rather than two frames: `fit_calibrator` accepts only the
     # wrapper, so the partition a fitted object came from is stated at the call
     # site rather than assumed.
@@ -148,7 +178,7 @@ def run_baseline_pipeline(
     joblib.dump(model, models_path / f"{model_type}.joblib")
     joblib.dump(calibrator, models_path / f"{model_type}_calibrator.joblib")
 
-    # --- 2. the decision rule, chosen on validation only ------------------------
+    # --- 3. the decision rule, chosen on validation only ------------------------
     # Scored through the calibrator, because that is what serving compares to the
     # threshold. A threshold picked on uncalibrated scores and then applied to
     # calibrated ones is a different policy than the one that was costed.
@@ -171,7 +201,7 @@ def run_baseline_pipeline(
     # raising IndexError on `.iloc[0]` of an empty selection (audit B11).
     selected = threshold_costs.loc[threshold_costs["threshold"].sub(threshold).abs().idxmin()]
 
-    # --- 3. test is scored once, and only reported ------------------------------
+    # --- 4. test is scored once, and only reported ------------------------------
     scores_test = _predict_default_probability(calibrator, split.x_test)
     # The uncalibrated score is kept for one number only: the Brier score the
     # correction was supposed to improve. Reporting the calibrated Brier without
@@ -225,6 +255,22 @@ def run_baseline_pipeline(
         "features": spec.summary(),
         "leakage": leakage_audit.summary(),
         "include_lender_priced": include_lender_priced,
+        # The embargo's own numbers, because "we corrected for survivorship bias"
+        # is an assertion and these two dicts are the evidence. Years are stringly
+        # keyed because JSON object keys are strings either way, and doing it here
+        # keeps the round-trip symmetric.
+        "embargo": embargo.summary(),
+        "embargo_snapshot": str(embargo.snapshot.date()),
+        "embargo_rows_immature": embargo.rows_immature,
+        "embargo_rows_unknown_maturity": embargo.rows_unknown_maturity,
+        "default_rate_by_vintage_before_embargo": {
+            str(year): rate for year, rate in embargo.default_rate_before.items()
+        },
+        "default_rate_by_vintage_after_embargo": {
+            str(year): rate for year, rate in embargo.default_rate_after.items()
+        },
+        "term_months_in": list(config.data.term_months_in),
+        "rows_after_embargo_and_term_filter": len(loans),
     }
     (metrics_path / f"{model_type}_metrics.json").write_text(
         json.dumps(metrics_payload, indent=2),

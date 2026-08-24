@@ -191,6 +191,51 @@ def filter_to_closed_loans(
     return loans.loc[status.isin(normalized_targets)]
 
 
+def term_months(loans: pd.DataFrame, *, term_column: str = "term") -> pd.Series:
+    """The loan term as a nullable integer month count.
+
+    ``term`` arrives as ``' 36 months'`` in one extract and ``'36 months'`` in
+    the other, so the digits are extracted rather than the string split: both
+    spellings, and any future one that still writes the number, resolve the same
+    way. A value with no digits becomes NA rather than raising, because the two
+    callers below want to *count* those rows, not abort on them.
+    """
+    if term_column not in loans.columns:
+        raise KeyError(
+            f"Expected term column `{term_column}` is missing. "
+            f"Present columns: {sorted(loans.columns)[:15]}."
+        )
+    return pd.to_numeric(
+        loans[term_column].astype("string").str.extract(r"(\d+)", expand=False),
+        errors="coerce",
+    )
+
+
+def filter_to_terms(
+    loans: pd.DataFrame,
+    *,
+    terms: Iterable[int],
+    term_column: str = "term",
+) -> pd.DataFrame:
+    """Keep only loans whose term is one of ``terms``. An empty ``terms`` keeps all.
+
+    This exists because of the embargo, not independently of it. Once immature
+    loans are removed, 60-month loans survive only in the earliest vintages - in
+    the shipped configuration they are 28% of the 2013 rows and 0% of every later
+    one. Training on that mix and scoring a term the model never sees in
+    validation or test is a train/serve mismatch dressed up as more data, so the
+    default restricts to 36-month loans and the drift report states the cliff
+    that justifies it.
+
+    Rows whose term does not parse are dropped, on the same reasoning as the
+    embargo: a loan that cannot be shown to be in scope is not in scope.
+    """
+    wanted = {int(term) for term in terms}
+    if not wanted:
+        return loans
+    return loans.loc[term_months(loans, term_column=term_column).isin(wanted)]
+
+
 def load_lending_club_data(
     path: str | Path,
     *,
@@ -295,17 +340,12 @@ def apply_outcome_maturity_embargo(
     rate_before = _default_rate_by_vintage(loans, date_column=date_column)
 
     issued = loans[date_column]
-    # `term` arrives as ' 36 months'; extracting the digits is more robust than
-    # a strip-and-split because both extracts differ in whitespace and casing.
-    term_months = pd.to_numeric(
-        loans[term_column].astype("string").str.extract(r"(\d+)", expand=False),
-        errors="coerce",
-    )
+    months = term_months(loans, term_column=term_column)
 
-    known = issued.notna() & term_months.notna()
+    known = issued.notna() & months.notna()
     # DateOffset arithmetic per row is slow on millions of rows; converting the
     # month count to a period offset keeps it vectorized.
-    matured_by = issued.dt.to_period("M") + term_months.fillna(0).astype("int64")
+    matured_by = issued.dt.to_period("M") + months.fillna(0).astype("int64")
     mature = known & (matured_by.dt.to_timestamp() <= snapshot_ts.to_period("M").to_timestamp())
 
     kept = loans.loc[mature]

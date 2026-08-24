@@ -11,7 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from risk_score.config import RunConfig, SplitConfig, load_run_config, load_yaml_config
+from risk_score.config import (
+    DataConfig,
+    RunConfig,
+    SplitConfig,
+    load_run_config,
+    load_yaml_config,
+)
 
 PROJECT_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "run.yaml"
 
@@ -31,9 +37,11 @@ def test_the_shipped_config_loads(tmp_path: Path) -> None:
     config = load_run_config(PROJECT_CONFIG)
 
     assert config.split.date_column == "issue_d"
-    assert config.split.train == ("2013-01", "2014-12")
-    assert config.split.validation == ("2015-01", "2015-12")
-    assert config.split.test == ("2016-01", "2016-12")
+    assert config.split.train == ("2013-01", "2014-09")
+    assert config.split.validation == ("2014-10", "2015-03")
+    assert config.split.test == ("2015-04", "2015-12")
+    assert config.data.snapshot == "2018-12-01"
+    assert config.data.term_months_in == (36,)
     assert config.cost_matrix.false_negative_cost == 5.0
     assert config.include_lender_priced is False
 
@@ -49,6 +57,7 @@ def test_the_shipped_config_matches_the_in_code_defaults() -> None:
     shipped = load_run_config(PROJECT_CONFIG)
     defaults = RunConfig()
 
+    assert shipped.data == defaults.data
     assert shipped.split == defaults.split
     assert shipped.cost_matrix == defaults.cost_matrix
     assert shipped.include_lender_priced == defaults.include_lender_priced
@@ -140,6 +149,35 @@ def test_a_partial_section_keeps_the_other_defaults(tmp_path: Path) -> None:
     assert config.cost_matrix.false_negative_cost == 12.0
     assert config.cost_matrix.false_positive_cost == 1.0
     assert config.split == SplitConfig()
+
+
+def test_the_snapshot_and_terms_are_read_from_the_data_section(tmp_path: Path) -> None:
+    path = write(tmp_path, "data:\n  snapshot: '2019-06-01'\n  term_months_in: [36, 60]\n")
+    config = load_run_config(path)
+
+    assert config.data == DataConfig(snapshot="2019-06-01", term_months_in=(36, 60))
+
+
+def test_b30_an_unknown_data_key_is_rejected(tmp_path: Path) -> None:
+    """The snapshot is the value most likely to be misspelled and the most
+    damaging to get wrong: too late, and censored vintages come back."""
+    path = write(tmp_path, "data:\n  snapshot_date: '2019-06-01'\n")
+    with pytest.raises(ValueError, match="snapshot_date"):
+        load_run_config(path)
+
+
+def test_an_omitted_term_list_means_every_term(tmp_path: Path) -> None:
+    """`term_months_in:` with nothing after it parses as null, and null has to
+    mean "do not filter" rather than "filter to nothing"."""
+    path = write(tmp_path, "data:\n  term_months_in:\n")
+    assert load_run_config(path).data.term_months_in == ()
+
+
+def test_a_term_list_written_as_a_bare_string_is_rejected(tmp_path: Path) -> None:
+    """`term_months_in: 36` would otherwise iterate into characters."""
+    path = write(tmp_path, "data:\n  term_months_in: '36'\n")
+    with pytest.raises(TypeError, match="must be a list of months"):
+        load_run_config(path)
 
 
 def test_the_lender_priced_tier_can_be_turned_on_from_the_config(tmp_path: Path) -> None:

@@ -21,8 +21,14 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.pipeline import Pipeline
 
-from risk_score.config import RunConfig, SplitConfig
-from risk_score.data_loading import create_default_target, load_lending_club_data
+from risk_score.config import DataConfig, RunConfig, SplitConfig
+from risk_score.data_loading import (
+    apply_outcome_maturity_embargo,
+    create_default_target,
+    filter_to_terms,
+    load_lending_club_data,
+    term_months,
+)
 from risk_score.evaluation import (
     ClassificationMetrics,
     ValidationScores,
@@ -31,14 +37,22 @@ from risk_score.evaluation import (
 from risk_score.modeling import TimeSplit, split_by_time
 from risk_score.pipeline import run_baseline_pipeline
 
-# The synthetic extract covers 2013-01..2016-12, so three years of vintages
-# split three ways with positives in each. These are the shipped defaults too;
-# restated here so the split these tests reproduce by hand is explicit.
-TRAIN = ("2013-01", "2014-12")
-VALIDATION = ("2015-01", "2015-12")
-TEST = ("2016-01", "2016-12")
+# The synthetic extract is issued across 2013-01..2016-12, but the maturity
+# embargo removes every vintage too young to have finished paying by the
+# snapshot, so what actually reaches the split ends in 2015-12. These are the
+# shipped defaults; restated here so the split these tests reproduce by hand is
+# explicit rather than inherited.
+TRAIN = ("2013-01", "2014-09")
+VALIDATION = ("2014-10", "2015-03")
+TEST = ("2015-04", "2015-12")
 
 SPLIT = SplitConfig(train=TRAIN, validation=VALIDATION, test=TEST)
+
+#: Also the shipped default. Stated because these windows are only non-empty
+#: under this snapshot: a later one readmits the 2016 vintage, an earlier one
+#: empties the test window.
+SNAPSHOT = "2018-12-01"
+TERM_MONTHS = (36,)
 
 #: The pipeline's own default, restated so the threshold assertion below compares
 #: against a stated cost matrix rather than whatever the default happens to be.
@@ -68,6 +82,11 @@ def rebuild_split(raw_path: Path) -> TimeSplit:
     value can only prove that code is self-consistent.
     """
     loans = load_lending_club_data(raw_path)
+    # The row filters, in the pipeline's order. Reproducing the split without
+    # them would compare the pipeline's numbers against a different population,
+    # so every assertion downstream would be off by the embargo.
+    loans = apply_outcome_maturity_embargo(loans, snapshot=SNAPSHOT).loans
+    loans = filter_to_terms(loans, terms=TERM_MONTHS)
     loans = loans.assign(default_flag=create_default_target(loans))
     loans = loans.dropna(subset=["default_flag"])
     return split_by_time(
@@ -241,6 +260,82 @@ def test_the_metrics_file_records_the_size_of_every_partition(
     assert payload["rows_validation"] == len(split.x_validation)
     assert payload["rows_test"] == len(split.x_test)
     assert payload["include_lender_priced"] is False
+
+
+def test_the_maturity_embargo_runs_and_flattens_the_vintage_default_rate(
+    raw_csv: Path, tmp_path: Path
+) -> None:
+    """The correction this project exists to demonstrate, asserted end to end.
+
+    ``apply_outcome_maturity_embargo`` was written, documented, and tested, and
+    then nothing called it: every run before this one measured the survivorship
+    bias rather than removing it. So the assertion is not that the function
+    works - ``test_data_loading.py`` covers that - but that a *run* applied it.
+    """
+    output_dir = tmp_path / "reports"
+    run(raw_csv, output_dir)
+    payload = read_metrics(output_dir)
+
+    before = payload["default_rate_by_vintage_before_embargo"]
+    after = payload["default_rate_by_vintage_after_embargo"]
+
+    assert payload["embargo_snapshot"] == "2018-12-01"
+    assert payload["embargo_rows_immature"] > 0
+
+    # The signature of the bias: measured default rate climbing with vintage
+    # purely because the later vintages only appear when they defaulted early.
+    assert before["2016"] > before["2013"]
+    # And its removal: the youngest censored vintage is gone altogether, because
+    # no 36-month loan issued in 2016 had matured by a 2018-12 snapshot.
+    assert "2016" not in after
+    # The remaining vintages are no longer ordered by censoring. 2015 is the last
+    # one that survives, and before the embargo it was the worst of the three.
+    assert before["2015"] > before["2014"] > 0
+    assert after["2015"] < before["2015"]
+
+
+def test_immature_loans_never_reach_any_partition(raw_csv: Path, tmp_path: Path) -> None:
+    """A row filter applied after the split would leave test contaminated.
+
+    Checked by the calendar rather than by row identity: under a 2018-12 snapshot
+    a 36-month loan must have been issued by 2015-12 to have matured, so an
+    issue date later than that in *any* partition means the embargo ran too late
+    or not at all.
+    """
+    split = rebuild_split(raw_csv)
+    latest_admissible = pd.Timestamp("2015-12-31")
+
+    for partition in (split.x_train, split.x_validation, split.x_test):
+        assert partition["issue_d"].max() <= latest_admissible
+
+
+def test_the_term_filter_removes_the_sixty_month_cliff(raw_csv: Path, tmp_path: Path) -> None:
+    """Training on a term that never appears in validation or test is a mix
+    mismatch, not extra data.
+
+    After the embargo, 60-month loans survive only in the earliest vintages, so
+    without this filter train carries them and the later partitions carry none.
+    """
+    split = rebuild_split(raw_csv)
+
+    for partition in (split.x_train, split.x_validation, split.x_test):
+        assert set(term_months(partition).unique()) == {36}
+
+
+def test_admitting_every_term_is_a_config_change_not_a_code_change(
+    raw_csv: Path, tmp_path: Path
+) -> None:
+    """`term_months_in: []` means "no term filter", and the run has to grow."""
+    restricted = tmp_path / "restricted"
+    unrestricted = tmp_path / "unrestricted"
+    run(raw_csv, restricted)
+    run(raw_csv, unrestricted, data=DataConfig(snapshot=SNAPSHOT, term_months_in=()))
+
+    assert (
+        read_metrics(unrestricted)["rows_after_embargo_and_term_filter"]
+        > read_metrics(restricted)["rows_after_embargo_and_term_filter"]
+    )
+    assert read_metrics(unrestricted)["term_months_in"] == []
 
 
 def test_the_three_partitions_are_disjoint_and_chronological(raw_csv: Path, tmp_path: Path) -> None:

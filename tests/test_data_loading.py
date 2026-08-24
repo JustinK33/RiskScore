@@ -13,8 +13,10 @@ from risk_score.data_loading import (
     apply_outcome_maturity_embargo,
     create_default_target,
     filter_to_closed_loans,
+    filter_to_terms,
     load_lending_club_data,
     read_raw_loans,
+    term_months,
 )
 from risk_score.schema import normalize_credit_schema
 
@@ -259,3 +261,41 @@ def test_embargo_names_a_missing_column() -> None:
         apply_outcome_maturity_embargo(
             _embargo_frame().drop(columns=["term"]), snapshot="2018-12-01"
         )
+
+
+def _term_frame() -> pd.DataFrame:
+    """The two term spellings the real extracts use, plus one that does not parse."""
+    return pd.DataFrame({"term": [" 36 months", "60 months", "36 MONTHS", "n/a"]})
+
+
+def test_term_months_reads_both_extract_spellings() -> None:
+    result = term_months(_term_frame())
+
+    assert result.tolist()[:3] == [36, 60, 36]
+    # Not zero, and not an exception: the callers count these rows separately.
+    assert pd.isna(result.iloc[3])
+
+
+def test_term_months_names_a_missing_column() -> None:
+    with pytest.raises(KeyError, match="term"):
+        term_months(pd.DataFrame({"loan_amnt": [1000]}))
+
+
+def test_filter_to_terms_keeps_only_the_requested_terms() -> None:
+    kept = filter_to_terms(_term_frame(), terms=(36,))
+
+    assert kept.index.tolist() == [0, 2]
+
+
+def test_filter_to_terms_drops_rows_whose_term_did_not_parse() -> None:
+    """Same reasoning as the embargo: a loan that cannot be shown to be in scope
+    is not in scope."""
+    assert 3 not in filter_to_terms(_term_frame(), terms=(36, 60)).index
+
+
+def test_filter_to_terms_with_no_terms_keeps_everything() -> None:
+    """`term_months_in: []` in the config means "every term", and must not mean
+    "no rows" - an empty allow-list read as a filter would empty the run."""
+    frame = _term_frame()
+
+    assert filter_to_terms(frame, terms=()) is frame

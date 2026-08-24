@@ -7,14 +7,30 @@
 # of it, the copies disagreed with the registry, and the model was fit on the
 # disagreement.
 
+data:
+  # When this extract was pulled. Not inferable from the file, and the one value
+  # here that is a claim about the data rather than about the experiment: set it
+  # later than the true pull date and immature loans come back, which reads as
+  # rising defaults rather than as a bug. Correct for data/raw/1/loan.csv, and
+  # conservative for the synthetic extract, whose observer runs to 2019-06.
+  snapshot: "2018-12-01"
+  # After the embargo, 60-month loans are 28% of the 2013 rows and 0% of 2015's.
+  # Training on a term the later partitions never contain is a mix cliff, not
+  # extra data. Set to [] to admit every term.
+  term_months_in: [36]
+
 split:
   date_column: issue_d
-  # Inclusive of the month each bound names, so "2014-12" runs through 31
-  # December. Train fits the model; validation picks the threshold and nothing
+  # Inclusive of the month each bound names, so "2014-09" runs through 30
+  # September. Train fits the model; validation picks the threshold and nothing
   # else does; test is scored once and only reported.
-  train: ["2013-01", "2014-12"]
-  validation: ["2015-01", "2015-12"]
-  test: ["2016-01", "2016-12"]
+  #
+  # These end where they do because of `data.snapshot`: no 36-month loan issued
+  # after 2015 has matured by 2018-12, so a window reaching into 2016 would be
+  # empty and the split would raise. Move the snapshot and these move with it.
+  train: ["2013-01", "2014-09"]
+  validation: ["2014-10", "2015-03"]
+  test: ["2015-04", "2015-12"]
 
 threshold:
   # A missed default costs five times what a declined good applicant does. This

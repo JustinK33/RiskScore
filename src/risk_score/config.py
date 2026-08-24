@@ -24,9 +24,15 @@ the shipped config raised on load - every ``scripts/run_baseline.py`` invocation
 died on it. Nothing tested the config files, because there was nothing to test:
 they were dicts.
 
-What remains configurable is what a run legitimately varies: the split windows,
-the model hyperparameters, the cost matrix, the feature tier, and an alias
-escape hatch for onboarding an unfamiliar extract without a code change.
+What remains configurable is what a run legitimately varies: the extract's
+snapshot date and admissible loan terms, the split windows, the model
+hyperparameters, the cost matrix, the feature tier, and an alias escape hatch for
+onboarding an unfamiliar extract without a code change.
+
+The ``data`` section is the one whose default is a claim about a *file* rather
+than about the experiment, and the one section whose values are coupled to
+another's: the snapshot decides which vintages can appear at all, so it and the
+split windows are wrong together or right together.
 """
 
 from __future__ import annotations
@@ -41,14 +47,36 @@ import yaml
 from risk_score.evaluation import CostMatrix
 
 #: Shipped defaults, so ``RunConfig()`` is a usable configuration and the YAML
-#: only has to state what it changes. The windows suit the synthetic extract and
-#: the 2013-2016 slice of the real one; see
-#: ``docs/decisions/0003-train-validation-test-split.md``.
+#: only has to state what it changes.
+#:
+#: These windows are downstream of :data:`DEFAULT_SNAPSHOT`, not independent of
+#: it. Under a 2018-12 snapshot no 36-month loan issued after 2015 has matured,
+#: so a window reaching into 2016 would be empty and the split would raise. Both
+#: constants therefore move together; see
+#: ``docs/decisions/0003-train-validation-test-split.md`` and
+#: ``docs/decisions/0004-outcome-maturity-embargo.md``.
 DEFAULT_SPLIT_WINDOWS: dict[str, tuple[str, str]] = {
-    "train": ("2013-01", "2014-12"),
-    "validation": ("2015-01", "2015-12"),
-    "test": ("2016-01", "2016-12"),
+    "train": ("2013-01", "2014-09"),
+    "validation": ("2014-10", "2015-03"),
+    "test": ("2015-04", "2015-12"),
 }
+
+#: When the extract was pulled. A property of the *file*, which is why it has to
+#: be stated rather than inferred: nothing in a CSV of loans records the date
+#: someone exported it, and guessing it too late silently readmits the
+#: survivorship bias the embargo exists to remove.
+#:
+#: ``2018-12-01`` is correct for ``data/raw/1/loan.csv`` and for the synthetic
+#: extract, whose observer stops at 2019-06 - a later snapshot than the default,
+#: so the default is conservative on it rather than wrong.
+DEFAULT_SNAPSHOT = "2018-12-01"
+
+#: Loan terms admitted, in months. Empty means every term.
+#:
+#: 36 only, because after the embargo 60-month loans exist almost entirely in the
+#: earliest vintages: 28% of the 2013 rows against 0% of 2015's. See
+#: :func:`risk_score.data_loading.filter_to_terms`.
+DEFAULT_TERM_MONTHS: tuple[int, ...] = (36,)
 
 
 def _reject_unknown_keys(mapping: Mapping[str, Any], allowed: Iterable[str], where: str) -> None:
@@ -90,6 +118,33 @@ def _as_window(value: object, where: str) -> tuple[str, str]:
 
 
 @dataclass(frozen=True, slots=True)
+class DataConfig:
+    """Which rows are admissible at all, before any partitioning.
+
+    Both fields describe the *extract*, not the experiment, and both were
+    previously absent: the embargo existed, was tested, and nothing called it, so
+    every shipped run measured the survivorship bias instead of removing it.
+    """
+
+    snapshot: str = DEFAULT_SNAPSHOT
+    term_months_in: tuple[int, ...] = DEFAULT_TERM_MONTHS
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> DataConfig:
+        _reject_unknown_keys(mapping, ("snapshot", "term_months_in"), "data")
+        defaults = cls()
+        terms = mapping.get("term_months_in", defaults.term_months_in)
+        if terms is None:
+            terms = ()
+        if isinstance(terms, str) or not isinstance(terms, Iterable):
+            raise TypeError(f"`data.term_months_in` must be a list of months, got {terms!r}.")
+        return cls(
+            snapshot=str(mapping.get("snapshot", defaults.snapshot)),
+            term_months_in=tuple(int(term) for term in terms),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SplitConfig:
     """Which vintages train the model, tune the decision rule, and are reported."""
 
@@ -116,6 +171,7 @@ class SplitConfig:
 class RunConfig:
     """Everything one training run needs that is not a property of the data."""
 
+    data: DataConfig = field(default_factory=DataConfig)
     split: SplitConfig = field(default_factory=SplitConfig)
     cost_matrix: CostMatrix = field(
         default_factory=lambda: CostMatrix(false_negative_cost=5.0, false_positive_cost=1.0)
@@ -136,7 +192,7 @@ class RunConfig:
     def from_mapping(cls, mapping: Mapping[str, Any]) -> RunConfig:
         """Parse a loaded YAML document, rejecting anything unrecognized."""
         _reject_unknown_keys(
-            mapping, ("split", "threshold", "leakage", "models", "column_aliases"), "config"
+            mapping, ("data", "split", "threshold", "leakage", "models", "column_aliases"), "config"
         )
 
         threshold = _as_mapping(mapping.get("threshold"), "threshold")
@@ -169,6 +225,7 @@ class RunConfig:
         }
 
         return cls(
+            data=DataConfig.from_mapping(_as_mapping(mapping.get("data"), "data")),
             split=SplitConfig.from_mapping(_as_mapping(mapping.get("split"), "split")),
             cost_matrix=costs,
             include_lender_priced=bool(
