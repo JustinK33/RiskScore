@@ -15,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from risk_score.pipeline import RunResult, train_run
 from risk_score.sample_data import make_synthetic_loans
 
 # Small enough to keep the default `pytest -q` run under a couple of seconds,
@@ -64,6 +65,24 @@ def raw_csv(tmp_path: Path, raw_loans: pd.DataFrame) -> Path:
     destination = tmp_path / "loans.csv"
     raw_loans.to_csv(destination, index=False)
     return destination
+
+
+@pytest.fixture(scope="session")
+def trained_run(tmp_path_factory: pytest.TempPathFactory) -> RunResult:
+    """One published run, fitted once for the whole session.
+
+    Session-scoped on purpose. Explainability, drift, and reporting all need a
+    *real* fitted bundle - a stub estimator would not have coefficients, a
+    design matrix, or a background - and refitting per test would add a couple of
+    seconds each to a suite that currently runs in twelve.
+
+    Consumers must treat it as read-only. Nothing here mutates the run directory,
+    and a test that needs to is expected to fit its own.
+    """
+    root = tmp_path_factory.mktemp("trained")
+    dataset = root / "loans.csv"
+    make_synthetic_loans(n_rows=SMALL_ROWS).to_csv(dataset, index=False)
+    return train_run(dataset, output_dir=root / "reports")
 
 
 @pytest.fixture

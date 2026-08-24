@@ -21,11 +21,16 @@ dependencies = [
 
 # Extras are split by what a given deployment actually needs. A container that
 # only serves `/predict` installs `[serve]` and does not pull matplotlib,
-# xgboost, or shap's numba chain, which roughly halves the image.
+# xgboost, or pyarrow, which roughly halves the image.
+#
+# Note what is *not* here: `shap`. Reason codes are exact SHAP values, computed
+# from the model's own coefficients for a linear model and from XGBoost's built-in
+# TreeSHAP for a boosted one - see `docs/code/explain.md`. The package would add a
+# numba/llvmlite toolchain, and a wheel-availability risk on new Python versions,
+# to reach code paths `explain.py` reaches in a dozen lines.
 [project.optional-dependencies]
 train = [
     "xgboost>=2.0",
-    "shap>=0.44",
     "matplotlib>=3.8",
     "pyarrow>=16.0",
 ]

@@ -89,6 +89,7 @@ from risk_score.evaluation import (
     compute_threshold_cost_table,
     select_threshold_by_cost,
 )
+from risk_score.explain import DEFAULT_TOP_K, Explainer, build_background
 from risk_score.leakage_check import audit_columns
 from risk_score.logging_setup import bind_run_id, capture_run_log
 from risk_score.modeling import SUPPORTED_MODEL_TYPES, split_by_time, train_model
@@ -103,6 +104,7 @@ METRICS_FILENAME = "metrics.json"
 CALIBRATION_TEST_FILENAME = "calibration_test.csv"
 CALIBRATION_VALIDATION_FILENAME = "calibration_validation.csv"
 THRESHOLD_COSTS_FILENAME = "threshold_costs_validation.csv"
+SHAP_SUMMARY_FILENAME = "shap_summary.csv"
 CALIBRATION_FIGURE = "figures/calibration_test.png"
 RUN_LOG_FILENAME = "run.log"
 
@@ -437,8 +439,18 @@ def _execute_run(
         threshold=threshold,
         feature_spec=spec,
         metadata=metadata,
+        # Transformed training rows, so an explainer can be built at boot from the
+        # bundle alone - the serving process never needs the extract, which is the
+        # only reason reason codes are affordable on the request path.
+        shap_background=build_background(model, split.x_train),
     )
     save_bundle(bundle, staging)
+
+    # Explained on test, not on train. Global importance is a claim about how the
+    # model behaves on rows it has not seen; measuring it on the fitted rows
+    # over-weights whatever it memorized.
+    explainer = Explainer(bundle)
+    shap_summary = explainer.global_summary(split.x_test)
 
     payload = {
         "run_id": run_id,
@@ -485,11 +497,16 @@ def _execute_run(
         "default_rate_by_vintage_after_embargo": embargo_report["default_rate_by_vintage_after"],
         "term_months_in": list(config.data.term_months_in),
         "rows_after_embargo_and_term_filter": rows["in_scope_terms"],
+        # The names only. The magnitudes live in shap_summary.csv, because a
+        # metrics file that grows a row per feature stops being readable.
+        "top_features": list(shap_summary["feature"].head(DEFAULT_TOP_K)),
+        "explainer": explainer.model_kind,
     }
     (staging / METRICS_FILENAME).write_text(json.dumps(payload, indent=2), encoding="utf-8")
     calibration_test.curve.to_csv(staging / CALIBRATION_TEST_FILENAME, index=False)
     calibration_validation.curve.to_csv(staging / CALIBRATION_VALIDATION_FILENAME, index=False)
     threshold_costs.to_csv(staging / THRESHOLD_COSTS_FILENAME, index=False)
+    shap_summary.to_csv(staging / SHAP_SUMMARY_FILENAME, index=False)
     # `plot_calibration_curve` writes where it is told and does not create
     # directories, which is correct for a plotting helper and means the caller
     # makes the subdirectory.

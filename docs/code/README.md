@@ -51,6 +51,12 @@ Read these in order; each one hands its output to the next.
 | `src/risk_score/logging_setup.py` | [logging_setup.md](logging_setup.md) | One `dictConfig`, UTC timestamps, and run/request ids in contextvars. |
 | `src/risk_score/cli.py` | [cli.md](cli.md) | The `riskscore` commands. Tracebacks propagate; exit codes distinguish a typo from a bug. |
 
+## Explaining and monitoring
+
+| File | Page | One line |
+| --- | --- | --- |
+| `src/risk_score/explain.py` | [explain.md](explain.md) | Exact SHAP without the `shap` package. Reason codes that sum back to the model's own score. |
+
 ## Fixtures
 
 | File | Page | One line |

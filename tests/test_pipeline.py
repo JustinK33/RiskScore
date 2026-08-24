@@ -157,6 +157,7 @@ def test_the_pipeline_writes_every_documented_artifact(raw_csv: Path, tmp_path: 
         "calibration_test.csv",
         "calibration_validation.csv",
         "threshold_costs_validation.csv",
+        "shap_summary.csv",
         "figures/calibration_test.png",
         "run.log",
     ):
