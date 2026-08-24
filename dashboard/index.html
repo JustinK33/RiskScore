@@ -4,7 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Credit Risk Dashboard</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <!-- Two sheets, in this order: tokens declares the custom properties app.css
+         consumes. Both are plain <link>s rather than one @import, because an
+         @import is discovered only after the first sheet has parsed and so
+         serializes two round trips. -->
+    <link rel="stylesheet" href="/styles/tokens.css" />
+    <link rel="stylesheet" href="/styles/app.css" />
   </head>
   <body>
     <header class="topbar">

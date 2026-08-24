@@ -1,0 +1,203 @@
+/*
+ * Design tokens. Every value the dashboard uses, declared once.
+ *
+ * Three rules govern this file.
+ *
+ * 1. No component styles here. `app.css` may only reference these names, so a
+ *    colour change is a one-line edit rather than a grep.
+ * 2. The chart colours are custom properties like every other colour, because
+ *    canvas has no cascade: `charts.js` reads them with `getComputedStyle` and
+ *    therefore follows the theme automatically. Hard-coded `#2f6fbe` inside the
+ *    drawing code is how the previous dashboard ended up with dark-mode charts
+ *    that were unreadable, and there was nowhere to fix it but the JS.
+ * 3. Sizes that the canvas has to agree with - the type scale, the plot padding
+ *    - live here too, so a label measured in JS uses the same number the CSS
+ *    laid out. `measureText` needs a font string, and it gets it from here.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Palette. Light is the default so a stylesheet failure degrades to legible
+     dark-on-white rather than to black-on-black. */
+  --bg: #f5f7f4;
+  --surface: #ffffff;
+  --surface-soft: #eef3ef;
+  --surface-sunken: #fbfcfb;
+  --text: #18201d;
+  --text-inverse: #ffffff;
+  --muted: #5c6a64;
+  --line: #d8e0db;
+  --line-strong: #b6c2bb;
+
+  --accent: #1f7a5a;
+  --accent-strong: #155c43;
+  --accent-soft: #e4f0ea;
+  --blue: #2f6fbe;
+  --ok: #1f7a5a;
+  --warn: #b45f1d;
+  --warn-soft: #fbf0e4;
+  --danger: #a52a2a;
+  --danger-soft: #fbeaea;
+
+  --shadow-1: 0 1px 2px rgba(24, 32, 29, 0.06);
+  --shadow-2: 0 14px 34px rgba(24, 32, 29, 0.08);
+  --focus: #2f6fbe;
+
+  /* Charts. Series colours are ordered: 1 is the subject of the chart, 2 the
+     comparison, 3 the reference line. They are distinguishable in greyscale as
+     well as in hue, because a colour-blind reader and a printed page are the
+     same problem. */
+  --chart-plot-bg: transparent;
+  --chart-grid: #e6ece8;
+  --chart-axis: #93a29b;
+  --chart-ink: #3d4a44;
+  --chart-ink-soft: #6f7d77;
+  --chart-series-1: #1f7a5a;
+  --chart-series-2: #2f6fbe;
+  --chart-series-3: #b45f1d;
+  --chart-series-4: #7a4fa3;
+  --chart-reference: #a3b0aa;
+  --chart-band-ok: rgba(31, 122, 90, 0.12);
+  --chart-band-warn: rgba(180, 95, 29, 0.14);
+  --chart-band-bad: rgba(165, 42, 42, 0.14);
+
+  /* Spacing. A 4px scale: every gap and pad in the dashboard is one of these
+     eight numbers, which is what stops the 13px/14px/18px drift the old
+     stylesheet had. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* Type. px rather than rem: the canvas font string has to be an absolute
+     size, and two scales that can disagree is worse than not honouring a
+     browser font-size preference in a fixed-layout dashboard. */
+  --font-sans:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 30px;
+  --text-3xl: 34px;
+  --leading-tight: 1.2;
+  --leading: 1.45;
+
+  /* The two font strings `charts.js` passes to the canvas context. Kept here so
+     axis labels match the surrounding CSS rather than approximating it. */
+  --chart-font: 600 11px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --chart-font-label: 700 12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --border: 1px solid var(--line);
+  --content-width: 1240px;
+}
+
+/*
+ * Dark theme, twice.
+ *
+ * The media query is gated on `:not([data-theme="light"])` so an explicit light
+ * choice wins over the OS preference; the attribute selector below it is the
+ * explicit dark choice. Without the gate, a user who picked light on a dark-mode
+ * machine would get dark anyway and the toggle would look broken.
+ *
+ * Dark is not the light palette inverted. Surfaces get lighter as they come
+ * forward (the opposite of light mode), shadows are near-useless so borders do
+ * the separating, and the accent is lightened because #1f7a5a on #161a18 fails
+ * contrast for text.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #121614;
+    --surface: #1b211e;
+    --surface-soft: #232b27;
+    --surface-sunken: #161c19;
+    --text: #e8efeb;
+    --text-inverse: #121614;
+    --muted: #9aa8a2;
+    --line: #313a35;
+    --line-strong: #46524c;
+
+    --accent: #4cb591;
+    --accent-strong: #6ecfab;
+    --accent-soft: #1e2f28;
+    --blue: #6ba6e8;
+    --ok: #4cb591;
+    --warn: #d99552;
+    --warn-soft: #322619;
+    --danger: #e07a7a;
+    --danger-soft: #331d1d;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 14px 34px rgba(0, 0, 0, 0.36);
+    --focus: #6ba6e8;
+
+    --chart-grid: #2a332e;
+    --chart-axis: #5f6d66;
+    --chart-ink: #c3cec9;
+    --chart-ink-soft: #93a09a;
+    --chart-series-1: #4cb591;
+    --chart-series-2: #6ba6e8;
+    --chart-series-3: #d99552;
+    --chart-series-4: #b18ad6;
+    --chart-reference: #55605a;
+    --chart-band-ok: rgba(76, 181, 145, 0.16);
+    --chart-band-warn: rgba(217, 149, 82, 0.18);
+    --chart-band-bad: rgba(224, 122, 122, 0.18);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #121614;
+  --surface: #1b211e;
+  --surface-soft: #232b27;
+  --surface-sunken: #161c19;
+  --text: #e8efeb;
+  --text-inverse: #121614;
+  --muted: #9aa8a2;
+  --line: #313a35;
+  --line-strong: #46524c;
+
+  --accent: #4cb591;
+  --accent-strong: #6ecfab;
+  --accent-soft: #1e2f28;
+  --blue: #6ba6e8;
+  --ok: #4cb591;
+  --warn: #d99552;
+  --warn-soft: #322619;
+  --danger: #e07a7a;
+  --danger-soft: #331d1d;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 14px 34px rgba(0, 0, 0, 0.36);
+  --focus: #6ba6e8;
+
+  --chart-grid: #2a332e;
+  --chart-axis: #5f6d66;
+  --chart-ink: #c3cec9;
+  --chart-ink-soft: #93a09a;
+  --chart-series-1: #4cb591;
+  --chart-series-2: #6ba6e8;
+  --chart-series-3: #d99552;
+  --chart-series-4: #b18ad6;
+  --chart-reference: #55605a;
+  --chart-band-ok: rgba(76, 181, 145, 0.16);
+  --chart-band-warn: rgba(217, 149, 82, 0.18);
+  --chart-band-bad: rgba(224, 122, 122, 0.18);
+}

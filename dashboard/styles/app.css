@@ -1,0 +1,397 @@
+/*
+ * Component styles. Reads tokens.css and declares no raw values of its own -
+ * if you need a colour or a size that is not a `var(--...)`, add it there.
+ *
+ * Layout is grid-only, with `minmax(0, 1fr)` wherever a track holds a canvas or
+ * a table. `1fr` alone resolves to `auto` for min-width purposes, so one wide
+ * child pushes the whole page into a horizontal scrollbar - which is exactly
+ * how the old stylesheet overflowed at 320px despite having a `min-width` on
+ * the body.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* So an anchored panel is not hidden under the sticky header. */
+  scroll-padding-top: var(--space-8);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
+}
+
+h2 {
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+}
+
+h3 {
+  font-size: var(--text-md);
+  line-height: var(--leading-tight);
+}
+
+a {
+  color: var(--accent-strong);
+}
+
+/*
+ * One focus style for everything, and it is `:focus-visible` so a mouse click
+ * does not leave a ring behind. Two pixels outside the element rather than a
+ * border change, because a border change moves the layout.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Screen-reader-only text that still receives focus if it is a control. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --- header --- */
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-7) var(--space-7) var(--space-5);
+  border-bottom: var(--border);
+  background: var(--surface);
+}
+
+.eyebrow {
+  margin-bottom: var(--space-1);
+  color: var(--accent-strong);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status {
+  min-height: 32px;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: var(--text-base);
+}
+
+.status[data-state="error"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+main {
+  width: min(var(--content-width), 100%);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-7) var(--space-8);
+}
+
+/* --- metric cards --- */
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.metric,
+.panel {
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+
+.metric {
+  min-height: 132px;
+  padding: var(--space-4);
+}
+
+.metric span {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-base);
+  font-weight: 700;
+}
+
+.metric strong {
+  display: block;
+  margin-top: var(--space-2);
+  font-size: var(--text-3xl);
+  line-height: 1;
+  /* Tabular figures so a column of numbers does not shift as values update. */
+  font-variant-numeric: tabular-nums;
+}
+
+.metric small {
+  display: block;
+  margin-top: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+}
+
+/* --- panels --- */
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.panel {
+  min-width: 0;
+  padding: var(--space-5);
+}
+
+.chart-panel {
+  grid-column: 1;
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.panel p {
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-base);
+}
+
+.chart-panel canvas {
+  display: block;
+  width: 100%;
+  height: min(52vh, 420px);
+  min-height: 320px;
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.side-panel {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.side-panel dl {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.side-panel dl div {
+  padding: var(--space-3) 0;
+  border-bottom: var(--border);
+}
+
+dt {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+dd {
+  margin-top: var(--space-1);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.artifact-links {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.artifact-links a {
+  display: block;
+  min-height: 38px;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-md);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.artifact-links a:hover {
+  border-color: var(--accent);
+  background: var(--surface-soft);
+}
+
+/* --- forms --- */
+
+.upload-panel {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.upload-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 150px;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.upload-form label {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.upload-form label span {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.upload-form input {
+  min-height: 40px;
+  width: 100%;
+  padding: 0 var(--space-2);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+}
+
+button {
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--text-inverse);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+button:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.upload-message {
+  min-height: 18px;
+  color: var(--muted);
+}
+
+/* --- responsive ---
+ *
+ * Breakpoints are where the *content* stops fitting, not at device names. 900px
+ * is where the 320px side panel plus a readable chart no longer coexist; 520px
+ * is where a four-up metric grid would be one word per line.
+ */
+
+@media (max-width: 900px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  main {
+    padding: var(--space-4);
+  }
+
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .panel-grid,
+  .upload-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side-panel {
+    grid-column: auto;
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .topbar {
+    padding: var(--space-5) var(--space-4) var(--space-4);
+  }
+
+  main {
+    padding: var(--space-3);
+  }
+
+  h1 {
+    font-size: var(--text-xl);
+  }
+
+  .metrics-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .metric {
+    min-height: 0;
+  }
+
+  .metric strong {
+    font-size: var(--text-2xl);
+  }
+}
