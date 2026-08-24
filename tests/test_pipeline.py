@@ -22,7 +22,11 @@ from sklearn.pipeline import Pipeline
 
 from risk_score.config import RunConfig, SplitConfig
 from risk_score.data_loading import create_default_target, load_lending_club_data
-from risk_score.evaluation import ClassificationMetrics, select_threshold_by_cost
+from risk_score.evaluation import (
+    ClassificationMetrics,
+    ValidationScores,
+    select_threshold_by_cost,
+)
 from risk_score.modeling import TimeSplit, split_by_time
 from risk_score.pipeline import run_baseline_pipeline
 
@@ -132,7 +136,10 @@ def test_b04_the_threshold_is_selected_on_validation_not_on_test(
     split = rebuild_split(raw_csv)
     model = load_model(output_dir)
     scores_validation = pd.Series(score(model, split.x_validation), index=split.x_validation.index)
-    expected = select_threshold_by_cost(split.y_validation, scores_validation, cost_matrix=COSTS)
+    expected = select_threshold_by_cost(
+        ValidationScores(y_true=split.y_validation, y_score=scores_validation),
+        cost_matrix=COSTS,
+    )
 
     assert payload["selected_threshold"] == expected
     assert payload["threshold_selected_on"] == "validation"

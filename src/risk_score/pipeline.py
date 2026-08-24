@@ -32,10 +32,11 @@ from risk_score.config import RunConfig
 from risk_score.data_loading import create_default_target, load_lending_club_data
 from risk_score.evaluation import (
     ClassificationMetrics,
+    ValidationScores,
     compute_auc_roc,
+    compute_average_precision,
     compute_brier_score,
     compute_ks_statistic,
-    compute_precision_recall,
     compute_threshold_cost_table,
     select_threshold_by_cost,
 )
@@ -125,8 +126,12 @@ def run_baseline_pipeline(
 
     # --- 1. the decision rule, chosen on validation only ------------------------
     scores_validation = _predict_default_probability(model, split.x_validation)
+    # The wrapper is the point: `select_threshold_by_cost` will not accept bare
+    # arrays, so the partition a fitted decision came from is stated at the call
+    # site rather than assumed.
     threshold = select_threshold_by_cost(
-        split.y_validation, scores_validation, cost_matrix=cost_matrix
+        ValidationScores(y_true=split.y_validation, y_score=scores_validation),
+        cost_matrix=cost_matrix,
     )
     threshold_costs = compute_threshold_cost_table(
         split.y_validation, scores_validation, cost_matrix=cost_matrix
@@ -141,9 +146,7 @@ def run_baseline_pipeline(
     scores_test = _predict_default_probability(model, split.x_test)
     metrics = ClassificationMetrics(
         auc_roc=compute_auc_roc(split.y_test, scores_test),
-        average_precision=float(
-            compute_precision_recall(split.y_test, scores_test)["average_precision"].iloc[0]
-        ),
+        average_precision=compute_average_precision(split.y_test, scores_test),
         ks_statistic=compute_ks_statistic(split.y_test, scores_test),
         brier_score=compute_brier_score(split.y_test, scores_test),
         default_rate=float(split.y_test.mean()),
