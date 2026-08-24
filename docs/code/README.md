@@ -89,6 +89,7 @@ Its one load-bearing consequence - that importing it pulls fastapi in transitive
 ## Reading the audit IDs
 
 Bugs found in the audit that prompted this work are numbered `B01`-`B32` (correctness), `S01`-`S06` (security), and `P01`-`P05` (performance).
+Bugs found later continue the same sequence; `B33` is the first of those.
 
 Each ID appears at the code that fixes it - a `# Fix B12: ...` comment, or an `(audit B12)` note in the module docstring where the file's whole shape is the fix - and in a test named `test_b12_*` that fails if the fix is reverted.
 So `rg B12` shows you the fix and its proof and nothing else.

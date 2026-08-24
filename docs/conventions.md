@@ -26,6 +26,7 @@ Twelve bare `TODO:` blocks in docstrings were removed during this work: each was
 ### Audit-ID tags
 
 Bugs found in the audit that prompted this work are numbered `B01`-`B32` for correctness issues, `S01`-`S06` for security issues, and `P01`-`P05` for performance issues.
+Anything found *after* that audit continues the same sequence rather than starting a new one, because the ID's only job is to join a fix to its proof - `B33` is the first of those.
 
 Each ID appears in at least **two** places:
 

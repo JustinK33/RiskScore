@@ -334,13 +334,18 @@ def test_b22_the_one_hot_block_is_sparse_and_the_width_is_the_declared_one(
     encoder = pipeline.named_steps["preprocess"].named_transformers_["categorical"]
 
     assert encoder.sparse_output is True
-    # 4 numerics, no missing values so no indicators, plus one column per purpose.
-    assert matrix.shape == (4, 6)
+    # 4 numerics, one indicator each (B33: the block follows the spec, not the
+    # training data's gaps), plus one column per purpose.
+    assert matrix.shape == (4, 10)
     assert pipeline.named_steps["preprocess"].get_feature_names_out().tolist() == [
         "loan_amnt",
         "term",
         "annual_inc",
         "loan_to_income_ratio",
+        "missingindicator_loan_amnt",
+        "missingindicator_term",
+        "missingindicator_annual_inc",
+        "missingindicator_loan_to_income_ratio",
         "purpose_car",
         "purpose_credit_card",
     ]
@@ -402,14 +407,75 @@ def test_a_partly_missing_numeric_column_gets_a_missingness_indicator() -> None:
     matrix = _dense(pipeline.fit_transform(frame))
     names = pipeline.named_steps["preprocess"].get_feature_names_out().tolist()
 
-    # Raw indicator is [0, 0, 1, 0]; the scaler standardizes it like any other
-    # numeric column, so mean 0.25 and population sd sqrt(0.1875).
+    # Plain 0/1, because the indicator rides in its own branch and never reaches
+    # the scaler (B33). Standardized, a column with one missing row in 629 has an
+    # sd near 0.016, so a serving row that omits the field lands 60 sd out.
     indicator = matrix[:, names.index("missingindicator_dti_clean")]
-    assert indicator.tolist() == pytest.approx(
-        [-0.5773502692, -0.5773502692, 1.7320508076, -0.5773502692]
-    )
+    assert indicator.tolist() == [0.0, 0.0, 1.0, 0.0]
     # The imputed value is the median of the three observed rows.
     assert matrix[2, names.index("dti_clean")] == pytest.approx(matrix[1, names.index("dti_clean")])
+
+
+def test_b33_omitting_an_optional_field_does_not_dominate_the_score() -> None:
+    """A rare-in-train gap must not arrive 60 standard deviations out at serve time.
+
+    Reproduces the bug from the serving end, which is the only end it was visible
+    from: one missing `dti` in a 200-row fit gives the indicator an sd near 0.07,
+    so standardizing it sent a request that simply omitted the field to +14 and the
+    reason codes attributed more log-odds to `dti_clean: null` than to every real
+    signal combined.
+    """
+    spec = build_feature_spec(["loan_amnt", "term", "annual_inc", "issue_d", "dti"])
+    rows = 200
+    frame = pd.DataFrame(
+        {
+            "loan_amnt": np.linspace(5_000.0, 35_000.0, rows),
+            "term": [" 36 months"] * rows,
+            "annual_inc": np.linspace(30_000.0, 200_000.0, rows),
+            "issue_d": ["Mar-2015"] * rows,
+            # Exactly one gap, which is what makes the indicator's sd tiny.
+            "dti": [np.nan] + [12.0 + (index % 17) for index in range(rows - 1)],
+        }
+    )
+    pipeline = build_model_pipeline(spec, FunctionTransformer())
+    pipeline.fit(frame)
+    names = pipeline.named_steps["preprocess"].get_feature_names_out().tolist()
+
+    served = _dense(pipeline.transform(frame.head(1).assign(dti=[np.nan])))
+    indicator = served[0, names.index("missingindicator_dti_clean")]
+
+    assert indicator == 1.0
+    # The real assertion: bounded, so a linear model's contribution for it is its
+    # coefficient rather than its coefficient times an arbitrary multiple.
+    assert abs(served[0, names.index("missingindicator_dti_clean")]) <= 1.0
+
+
+def test_b33_every_declared_numeric_column_has_an_indicator() -> None:
+    """`features="all"`: the matrix width follows the spec, not train's gaps.
+
+    With sklearn's default `"missing-only"` the indicator block depends on which
+    columns happened to have a gap during training, so a column that starts
+    arriving with gaps after deployment has no way to say so - and the width of the
+    design matrix becomes a property of the training data rather than of the spec.
+    """
+    spec = build_feature_spec(["loan_amnt", "term", "annual_inc", "issue_d", "dti"])
+    frame = pd.DataFrame(
+        {
+            "loan_amnt": [10_000.0, 20_000.0, 30_000.0],
+            "term": [" 36 months"] * 3,
+            "annual_inc": [50_000.0, 100_000.0, 60_000.0],
+            "issue_d": ["Mar-2015"] * 3,
+            "dti": [10.0, 20.0, 30.0],
+        }
+    )
+    pipeline = build_model_pipeline(spec, FunctionTransformer())
+    pipeline.fit(frame)
+    names = pipeline.named_steps["preprocess"].get_feature_names_out().tolist()
+
+    # Nothing is missing anywhere in this frame, so "missing-only" would emit none.
+    assert [f"missingindicator_{name}" for name in spec.numeric_features] == [
+        name for name in names if name.startswith("missingindicator_")
+    ]
 
 
 def test_an_unseen_category_does_not_break_a_served_row(
@@ -419,9 +485,9 @@ def test_an_unseen_category_does_not_break_a_served_row(
     pipeline.fit(tiny_frame)
     served = pipeline.transform(tiny_frame.head(1).assign(purpose=["renewable_energy"]))
 
-    assert served.shape == (1, 6)
+    assert served.shape == (1, 10)
     # Unknown, so neither known level fires.
-    assert _dense(served)[0, 4:].tolist() == [0.0, 0.0]
+    assert _dense(served)[0, 8:].tolist() == [0.0, 0.0]
 
 
 def test_a_spec_with_only_categoricals_still_builds_a_preprocessor() -> None:

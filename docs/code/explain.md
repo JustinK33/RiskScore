@@ -74,6 +74,7 @@ Calibration is a monotone map applied afterwards, so it changes the probability 
 The model sees `purpose_debt_consolidation`; the applicant has a `purpose`.
 Forty near-zero one-hot columns are not forty reasons, and the collapsed name is also the field the request payload carries, so a reason code names something the caller sent.
 `missingindicator_annual_inc` is attributed to `annual_inc` for the same reason: the fact that a value was absent is a fact *about that feature*.
+Those indicators are unscaled 0/1 (audit B33), so a missing value's contribution is the coefficient itself - which is what makes a reason code reading `revol_bal, value null` a bounded statement rather than the largest number in the list.
 
 **A column that cannot be attributed is reported under its own name and logged at `WARNING`.**
 It means the preprocessor grew a step this module does not know about.

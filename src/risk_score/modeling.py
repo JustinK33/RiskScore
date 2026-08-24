@@ -34,7 +34,7 @@ from typing import Any, Self
 
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
+from sklearn.impute import MissingIndicator, SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -357,10 +357,6 @@ def build_preprocessor(
                 "impute",
                 SimpleImputer(
                     strategy="median",
-                    # A missing value in credit data is informative: a borrower with
-                    # no `revol_util` has no revolving account, which is not the
-                    # same as one sitting at the median.
-                    add_indicator=True,
                     # Without this, a column that is entirely missing in train is
                     # silently dropped and the design matrix is narrower than the
                     # spec declares - which only shows up at serving time, as a
@@ -371,6 +367,26 @@ def build_preprocessor(
             ("scale", StandardScaler()),
         ]
     )
+    # Fix B33: a separate branch, so the indicators do NOT reach the scaler.
+    #
+    # Missingness stays a feature - a borrower with no `revol_util` has no
+    # revolving account, which is not the same as one sitting at the median - but
+    # it used to ride along inside `SimpleImputer(add_indicator=True)`, whose
+    # output the StandardScaler then standardized like any other column. For a
+    # column rarely missing in train that is catastrophic at serving time: with one
+    # missing row in 629, the indicator's sd is about 0.016, so an applicant who
+    # simply omitted an optional field arrived 60 standard deviations out and the
+    # reason codes read `revol_bal: -5.0 log-odds, value null` - larger than every
+    # real signal combined, and a decision flipped by a field the caller was told
+    # was optional.
+    #
+    # `features="all"` rather than the default `"missing-only"`, so the design
+    # matrix width depends on the *spec* and not on which columns happened to have
+    # a gap in train. A column with no missing values in train yields a constant
+    # zero, whose coefficient regularizes to zero, so an omitted field now moves
+    # the score by nothing instead of by 60 sd - and a column that starts arriving
+    # with gaps after deployment has somewhere to say so.
+    missingness = MissingIndicator(features="all")
     categorical = OneHotEncoder(
         # Unseen categories join the infrequent bucket rather than raising or
         # becoming an all-zero row: a new `addr_state` in a serving request is
@@ -386,6 +402,9 @@ def build_preprocessor(
     transformers: list[tuple[str, Any, list[str]]] = []
     if spec.numeric_features:
         transformers.append(("numeric", numeric, list(spec.numeric_features)))
+        # After the numeric branch, so `get_feature_names_out` lists every value
+        # beside its own indicator rather than interleaving two blocks.
+        transformers.append(("missingness", missingness, list(spec.numeric_features)))
     if spec.categorical_features:
         transformers.append(("categorical", categorical, list(spec.categorical_features)))
     if not transformers:
