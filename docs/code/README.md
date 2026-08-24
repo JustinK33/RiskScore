@@ -59,6 +59,27 @@ Read these in order; each one hands its output to the next.
 | `src/risk_score/drift.py` | [drift.md](drift.md) | PSI on the score and on every feature, and the per-vintage breakdown. Missingness is a bin. |
 | `src/risk_score/reporting.py` | [reporting.md](reporting.md) | The model card, the variant comparison, and the shapes the dashboard reads. Computes nothing. |
 
+## The service
+
+`api -> risk_score`, and never back.
+Every file here may import the library; nothing in the library imports these, which is what keeps a training-only install working with none of the serve dependencies present.
+
+| File | Page | One line |
+| --- | --- | --- |
+| `src/risk_score/api/settings.py` | [settings.md](settings.md) | One validated settings object. Every default is the safe one, and an unsafe combination refuses to boot. |
+| `src/risk_score/api/app.py` | [app.md](app.md) | The factory, the middleware order, the one error shape, and the bundle load. |
+| `src/risk_score/api/schemas.py` | [schemas.md](schemas.md) | Every request and response body. The applicant model is generated from the bundle's own `FeatureSpec`. |
+| `src/risk_score/api/deps.py` | [deps.md](deps.md) | The four things a handler may ask for, and the constant-time key check. |
+| `src/risk_score/api/scoring.py` | [scoring.md](scoring.md) | One applicant to a probability and a reason. Where the latency budget is declared. |
+| `src/risk_score/api/reports.py` | [reports.md](reports.md) | Fingerprint-keyed payload cache, ETags, and the artifact allowlist that excludes the pickle. |
+| `src/risk_score/api/routes_public.py` | [routes_public.md](routes_public.md) | Everything an unauthenticated caller can reach, in one readable file. |
+| `src/risk_score/api/routes_admin.py` | [routes_admin.md](routes_admin.md) | The whole mutating surface, off by default and behind a key. |
+| `src/risk_score/api/jobs.py` | [jobs.md](jobs.md) | A retrain in a killable child process, one slot, and content-addressed uploads. |
+| `src/risk_score/api/bench.py` | [bench.md](bench.md) | Nearest-rank latency percentiles, measured in process, checked against the budget. |
+
+`src/risk_score/api/__init__.py` has no page, on the same grounds as `src/risk_score/__init__.py`: it states the dependency direction above and re-exports two names.
+Its one load-bearing consequence - that importing it pulls fastapi in transitively, so `cli.py` must import it inside a handler - is documented where it constrains code, in [cli.md](cli.md) and [bench.md](bench.md).
+
 ## Fixtures
 
 | File | Page | One line |

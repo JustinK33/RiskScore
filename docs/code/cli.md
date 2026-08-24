@@ -16,8 +16,13 @@ It replaces two `scripts/` files that were removed, and the replacement is not c
 | Command | What it does |
 | --- | --- |
 | `riskscore train <csv>` | Fit one model and publish it as a run. |
+| `riskscore compare <csv>` | Fit both models on an identical split and publish the comparison. |
+| `riskscore explain [run_id]` | Reason codes for one applicant, from a published bundle. |
+| `riskscore card [run_id]` | Re-render a run's model card. |
 | `riskscore runs` | List published runs, newest first, with the active one marked. |
 | `riskscore activate <run_id>` | Point serving at a different published run. The rollback path. |
+| `riskscore serve` | Run the scoring API and the dashboard from one process. |
+| `riskscore bench [run_id]` | Measure single-applicant scoring latency against the declared budget. |
 | `riskscore make-sample-data [path]` | Write a synthetic Lending Club-shaped extract. |
 
 | Name | What it is |
@@ -26,8 +31,9 @@ It replaces two `scripts/` files that were removed, and the replacement is not c
 | `build_parser` | The whole command surface, so `--help` is the documentation. |
 | `EXIT_USER_ERROR` | `3`. |
 | `TRAIN_SUMMARY_KEYS` | What `train` prints, in order. |
+| `BENCH_CALLS`, `BENCH_WARMUP` | `bench`'s defaults, mirrored from `api/bench.py`; see **Known limits**. |
 
-Notable flags: `--model`, `--config`, `--include-lender-priced`, `--no-activate`, `--keep`, `--cache-dir`, `--no-cache`, `--output-dir`, `-v`, and `runs --json` / `runs --rebuild`.
+Notable flags: `--model`, `--config`, `--include-lender-priced`, `--no-activate`, `--keep`, `--cache-dir`, `--no-cache`, `--output-dir`, `-v`, `runs --json` / `runs --rebuild`, `serve --host` / `--port`, and `bench --calls` / `--warmup` / `--json`.
 
 ## Inputs and outputs
 
@@ -88,8 +94,26 @@ A command line writing under `data/cache` is expected; a library function doing 
 `--include-lender-priced` produces a new frozen config, because the whole point of freezing it is that the configuration a run *reports* is the configuration it *used*.
 
 **Only implemented commands exist.**
-`compare`, `explain`, `card`, `serve`, and `bench` arrive with the modules that back them.
+Each subcommand landed with the module that backs it, and none was declared ahead of one.
 A subcommand that exists and fails is worse than one that does not, because `--help` stops being a reliable answer to what the tool can do.
+
+**`serve` and `bench` import `risk_score.api` inside their handlers, not at the top of the file.**
+fastapi, uvicorn and pydantic-settings are the `[serve]` extra, so a training box that installed `[train]` only has none of them - and a module-level import would make `riskscore train` fail on a missing web framework it does not use.
+Everything else here imports normally, because the training dependencies are the base install.
+
+**`serve`'s flags default to `None`, not to the `Settings` default.**
+So an unmentioned flag leaves the `RISKSCORE_*` variable in charge.
+Passing argparse's default through would mean `riskscore serve` silently overrode a configured `RISKSCORE_HOST` with `127.0.0.1`, which is the confusing direction for that mistake to run in.
+
+**A refused public bind never opens a socket.**
+`Settings` is constructed before `import uvicorn`, and pydantic's `ValidationError` subclasses `ValueError`, so the refusal arrives in `main`'s existing user-error path: exit 3, the validator's own message, and no traceback.
+
+**`serve` passes `log_config=None` to uvicorn.**
+`create_app` has already configured logging, and uvicorn's default installs its own `dictConfig` - which would replace the handlers that emit the run id and the request id.
+The access log would still look fine and every application record would silently lose its context.
+
+**`bench` measures the with-reasons configuration only when the bundle can explain.**
+Reporting the cheaper number under the more expensive label is the one way that output could lie about the thing it exists to measure; when reasons are unavailable it prints why instead.
 
 ## What must NOT live here
 
@@ -101,7 +125,7 @@ A subcommand that exists and fails is worse than one that does not, because `--h
 
 ## Related tests
 
-`tests/test_cli.py`, 25 tests, driven through `main(argv)` rather than through a subprocess: the parsing, the dispatch, and the exit code are the surface worth testing, and a subprocess would add an interpreter start per case for no extra coverage.
+`tests/test_cli.py`, 40 tests, driven through `main(argv)` rather than through a subprocess: the parsing, the dispatch, and the exit code are the surface worth testing, and a subprocess would add an interpreter start per case for no extra coverage.
 The one thing that genuinely needs the installed entry point - that `riskscore` resolves at all - is asserted against `pyproject.toml` instead.
 
 Most of the suite is about behaviour under bad input, because that is where the old entry points were wrong.
@@ -114,6 +138,10 @@ Most of the suite is about behaviour under bad input, because that is where the 
 - `test_runs_lists_newest_first_and_marks_the_active_one` uses a tree whose active run is the *older* one, so the marker cannot be confused with "first row".
 - `test_every_subcommand_is_reachable_and_documented` reads the rendered help text rather than argparse's private `_subparsers`, so it breaks when the output regresses and not when argparse rearranges its internals. It is what caught `runs` having no description.
 - `test_make_sample_data_is_deterministic` is what lets the demo, the docs, and CI all quote the same numbers.
+- `test_serve_leaves_the_environment_in_charge_of_what_was_not_passed` monkeypatches `uvicorn.run` and asserts all three of it: the port comes from the environment, the host falls back to the default, and `log_config` is `None`.
+- `test_serve_refuses_a_public_bind` asserts exit 3, the variable named in stderr, and no `Traceback` - so the refusal reads as an instruction rather than as a crash.
+- `test_bench_defaults_match_the_library` is the agreement test that makes the duplicated constants safe.
+- `test_bench_json_reports_ordered_percentiles` pins `p50 <= p90 <= p99 <= max` per entry and that the with-reasons configuration is the slower of the two.
 
 ## Known limits
 
