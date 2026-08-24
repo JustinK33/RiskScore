@@ -23,6 +23,8 @@ from sklearn.pipeline import Pipeline
 from risk_score.artifacts import (
     ACTIVE_RUN_FILENAME,
     HEADLINE_METRICS,
+    METRICS_FILENAME,
+    RUN_LOG_FILENAME,
     STAGING_PREFIX,
     load_active_bundle,
     load_bundle,
@@ -42,7 +44,7 @@ from risk_score.evaluation import (
     select_threshold_by_cost,
 )
 from risk_score.modeling import TimeSplit, split_by_time
-from risk_score.pipeline import METRICS_FILENAME, RUN_LOG_FILENAME, RunResult, train_run
+from risk_score.pipeline import RunResult, train_run
 
 # The synthetic extract is issued across 2013-01..2016-12, but the maturity
 # embargo removes every vintage too young to have finished paying by the

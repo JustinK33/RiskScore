@@ -40,6 +40,8 @@ import pandas as pd
 
 from risk_score.artifacts import (
     DEFAULT_RETENTION,
+    METRICS_FILENAME,
+    VINTAGE_METRICS_FILENAME,
     load_bundle,
     read_active_run_id,
     read_manifest,
@@ -52,13 +54,7 @@ from risk_score.config import RunConfig, load_run_config
 from risk_score.explain import DEFAULT_TOP_K, Explainer
 from risk_score.logging_setup import configure_logging
 from risk_score.modeling import SUPPORTED_MODEL_TYPES
-from risk_score.pipeline import (
-    DEFAULT_COMPARISON_MODELS,
-    METRICS_FILENAME,
-    VINTAGE_METRICS_FILENAME,
-    compare_runs,
-    train_run,
-)
+from risk_score.pipeline import DEFAULT_COMPARISON_MODELS, compare_runs, train_run
 from risk_score.reporting import format_metric, render_model_card
 from risk_score.sample_data import make_synthetic_loans
 

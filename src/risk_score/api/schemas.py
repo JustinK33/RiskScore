@@ -287,6 +287,74 @@ class HealthOut(BaseModel):
     reason: str | None = None
 
 
+class RunListOut(BaseModel):
+    """Every recorded run, newest first, and which one is being served.
+
+    ``runs`` is a list of open dictionaries rather than a declared model, and that
+    is deliberate: the entries come from ``registry.json``, whose ``metrics`` block
+    holds whatever the run measured. Declaring it here would be a fourth copy of a
+    metric list that changes when evaluation does, and the older entries in a real
+    registry were written by older code - a strict model would make the history
+    unreadable the first time a metric is added.
+    """
+
+    active_run_id: str | None
+    runs: list[dict[str, Any]]
+
+
+class DatasetOut(BaseModel):
+    """A stored upload, named by its content."""
+
+    dataset_id: str = Field(description="Pass this to POST /api/runs. The file's SHA-256 prefix.")
+    size_bytes: int
+    #: Whether these exact bytes were already stored. Reported rather than hidden
+    #: because an operator who uploads twice by accident should be told the second
+    #: one was a no-op, not left wondering which copy a run used.
+    existing: bool
+
+
+class RetrainIn(BaseModel):
+    """What a retrain request may specify, and deliberately nothing else.
+
+    A ``dataset_id`` rather than a path or a CSV body. A path would let a caller
+    name any file the process can read; a body would put a 64 MiB upload inside a
+    request that also has to start a fit. Uploading is a separate, separately
+    switched-on route, and this one only refers to what it stored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str = Field(description="From POST /api/datasets.")
+    model_type: str = Field(default="logistic_regression")
+    include_lender_priced: bool = Field(
+        default=False,
+        description=(
+            "Include the lender's own pricing columns. Off by default: they encode "
+            "the decision being predicted. See ADR 0005."
+        ),
+    )
+
+
+class JobOut(BaseModel):
+    """A retrain's status, as a poller sees it.
+
+    ``detail`` carries the child's exception text, which is the whole reason this
+    endpoint exists - and the reason the retrain routes need a key. It is a
+    server-side error message, so it is only ever shown to a caller that was
+    authorized to start the job in the first place.
+    """
+
+    job_id: str
+    status: Literal["running", "succeeded", "failed", "timed_out"]
+    dataset: str
+    model_type: str
+    submitted_at: str
+    finished_at: str | None = None
+    run_id: str | None = None
+    detail: str | None = None
+    exit_code: int | None = None
+
+
 class ErrorOut(BaseModel):
     """Every error body the service produces, and deliberately not more.
 

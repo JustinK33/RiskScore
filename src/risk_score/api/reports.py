@@ -44,8 +44,18 @@ from typing import Any, Final
 import pandas as pd
 from fastapi import HTTPException, Request, Response, status
 
-from risk_score.artifacts import read_active_run_id
-from risk_score.reporting import columnar
+from risk_score.artifacts import (
+    CALIBRATION_TEST_FILENAME,
+    CALIBRATION_VALIDATION_FILENAME,
+    METRICS_FILENAME,
+    PSI_FEATURES_FILENAME,
+    PSI_SCORE_FILENAME,
+    SHAP_SUMMARY_FILENAME,
+    THRESHOLD_COSTS_FILENAME,
+    VINTAGE_METRICS_FILENAME,
+    read_active_run_id,
+)
+from risk_score.reporting import COMPARISON_FILENAME, columnar
 
 _log = logging.getLogger(__name__)
 
@@ -96,34 +106,38 @@ class Report:
 
 #: Every report the service will serve, and nothing else. An allowlist rather
 #: than "any file in the run directory": the run directory also holds
-#: ``model.joblib`` and ``run.log``, and neither is something an unauthenticated
-#: caller should be able to name.
+#: ``model.joblib``, and a pickle is not something an unauthenticated caller
+#: should be able to name.
+#:
+#: The filenames come from :mod:`risk_score.artifacts` rather than being spelled
+#: here. They were spelled here, and the copy for ``comparison.json`` disagreed
+#: with the writer's - which made that endpoint a permanent 404.
 REPORTS: Final[dict[str, Report]] = {
-    "metrics": Report(parts=(("metrics", "metrics.json"),)),
+    "metrics": Report(parts=(("metrics", METRICS_FILENAME),)),
     "calibration": Report(
         parts=(
-            ("validation", "calibration_validation.csv"),
-            ("test", "calibration_test.csv"),
+            ("validation", CALIBRATION_VALIDATION_FILENAME),
+            ("test", CALIBRATION_TEST_FILENAME),
         ),
         # A run whose test window held too few positives to bin writes only the
         # validation curve. That is a partial report, not a broken one.
         optional=frozenset({"test"}),
     ),
-    "threshold-costs": Report(parts=(("validation", "threshold_costs_validation.csv"),)),
-    "vintages": Report(parts=(("vintages", "metrics_by_vintage.csv"),)),
+    "threshold-costs": Report(parts=(("validation", THRESHOLD_COSTS_FILENAME),)),
+    "vintages": Report(parts=(("vintages", VINTAGE_METRICS_FILENAME),)),
     "drift": Report(
         parts=(
-            ("score", "psi_score.csv"),
-            ("features", "psi_features.csv"),
+            ("score", PSI_SCORE_FILENAME),
+            ("features", PSI_FEATURES_FILENAME),
         )
     ),
-    "shap-summary": Report(parts=(("features", "shap_summary.csv"),)),
+    "shap-summary": Report(parts=(("features", SHAP_SUMMARY_FILENAME),)),
     # Written only by `riskscore compare`, and at the report root: a comparison
     # describes several runs and is only complete once all of them are published,
     # so no single run directory owns it. Absent until a comparison has been run,
     # which is a 404 rather than an empty object - "nothing has been compared" and
     # "the two models tied" are different answers.
-    "comparison": Report(parts=(("comparison", "comparison.json"),), root_scoped=True),
+    "comparison": Report(parts=(("comparison", COMPARISON_FILENAME),), root_scoped=True),
 }
 
 

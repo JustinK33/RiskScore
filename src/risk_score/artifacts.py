@@ -83,6 +83,27 @@ MANIFEST_FILENAME = "manifest.json"
 REGISTRY_FILENAME = "registry.json"
 ACTIVE_RUN_FILENAME = "active_run.json"
 
+#: Every other file a published run directory holds. Here rather than beside the
+#: code that writes each one, because the writer and the API's serving allowlist
+#: have to agree on the spelling - and when they did not, the endpoint for
+#: ``comparison.json`` could only ever return 404. One constant per file means a
+#: rename is a compile-time problem instead of a 404 nobody notices.
+#:
+#: ``comparison.json`` is the exception and is deliberately not here: it lives at
+#: the report root, beside :data:`REGISTRY_FILENAME`, because it describes several
+#: runs. :mod:`risk_score.reporting` explains why.
+METRICS_FILENAME = "metrics.json"
+MODEL_CARD_FILENAME = "model_card.md"
+CALIBRATION_TEST_FILENAME = "calibration_test.csv"
+CALIBRATION_VALIDATION_FILENAME = "calibration_validation.csv"
+THRESHOLD_COSTS_FILENAME = "threshold_costs_validation.csv"
+SHAP_SUMMARY_FILENAME = "shap_summary.csv"
+PSI_SCORE_FILENAME = "psi_score.csv"
+PSI_FEATURES_FILENAME = "psi_features.csv"
+VINTAGE_METRICS_FILENAME = "metrics_by_vintage.csv"
+CALIBRATION_FIGURE = "figures/calibration_test.png"
+RUN_LOG_FILENAME = "run.log"
+
 #: Prefix for a run directory that is still being written. Leading dot so it
 #: sorts and globs apart from real run ids, which start with a digit.
 STAGING_PREFIX = ".staging-"

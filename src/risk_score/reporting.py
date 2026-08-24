@@ -54,11 +54,10 @@ from risk_score.drift import PSI_MODERATE, PSI_SIGNIFICANT
 from risk_score.explain import feature_label
 from risk_score.features import FeatureTier, columns_in_tier
 
-#: The card, next to the metrics it summarizes.
-MODEL_CARD_FILENAME = "model_card.md"
-
 #: The comparison, at the report root rather than inside a run (see the module
-#: docstring).
+#: docstring). Unlike every other artifact name, this one is not in
+#: :mod:`risk_score.artifacts`: that module owns the layout of a *run* directory,
+#: and this file is deliberately not in one.
 COMPARISON_FILENAME = "comparison.json"
 
 #: Compared side by side, with the direction that counts as an improvement. The

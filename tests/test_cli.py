@@ -19,10 +19,14 @@ from pathlib import Path
 
 import pytest
 
-from risk_score.artifacts import read_active_run_id, read_registry
+from risk_score.artifacts import (
+    METRICS_FILENAME,
+    MODEL_CARD_FILENAME,
+    read_active_run_id,
+    read_registry,
+)
 from risk_score.cli import EXIT_USER_ERROR, TRAIN_SUMMARY_KEYS, build_parser, main
-from risk_score.pipeline import METRICS_FILENAME
-from risk_score.reporting import COMPARISON_FILENAME, MODEL_CARD_FILENAME
+from risk_score.reporting import COMPARISON_FILENAME
 
 #: The synthetic default of 4000 rows takes a few seconds to fit; these tests are
 #: about argument handling, so they use the smallest extract that still yields

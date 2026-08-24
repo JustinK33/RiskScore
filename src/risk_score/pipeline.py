@@ -48,8 +48,19 @@ from typing import Any
 import pandas as pd
 
 from risk_score.artifacts import (
+    CALIBRATION_FIGURE,
+    CALIBRATION_TEST_FILENAME,
+    CALIBRATION_VALIDATION_FILENAME,
     DEFAULT_RETENTION,
     HEADLINE_METRICS,
+    METRICS_FILENAME,
+    MODEL_CARD_FILENAME,
+    PSI_FEATURES_FILENAME,
+    PSI_SCORE_FILENAME,
+    RUN_LOG_FILENAME,
+    SHAP_SUMMARY_FILENAME,
+    THRESHOLD_COSTS_FILENAME,
+    VINTAGE_METRICS_FILENAME,
     RunMetadata,
     ScoringBundle,
     build_run_id,
@@ -108,7 +119,6 @@ from risk_score.modeling import (
 )
 from risk_score.reporting import (
     COMPARISON_FILENAME,
-    MODEL_CARD_FILENAME,
     comparison_payload,
     comparison_table,
     render_model_card,
@@ -116,20 +126,6 @@ from risk_score.reporting import (
 from risk_score.transformers import build_feature_spec
 
 LOGGER = logging.getLogger(__name__)
-
-#: File names inside a run directory. Named here rather than inlined because the
-#: API serves them from an allowlist and the dashboard fetches them by name, so
-#: there is one spelling of each.
-METRICS_FILENAME = "metrics.json"
-CALIBRATION_TEST_FILENAME = "calibration_test.csv"
-CALIBRATION_VALIDATION_FILENAME = "calibration_validation.csv"
-THRESHOLD_COSTS_FILENAME = "threshold_costs_validation.csv"
-SHAP_SUMMARY_FILENAME = "shap_summary.csv"
-PSI_SCORE_FILENAME = "psi_score.csv"
-PSI_FEATURES_FILENAME = "psi_features.csv"
-VINTAGE_METRICS_FILENAME = "metrics_by_vintage.csv"
-CALIBRATION_FIGURE = "figures/calibration_test.png"
-RUN_LOG_FILENAME = "run.log"
 
 #: What ``riskscore compare`` fits when not told otherwise: the interpretable
 #: baseline first, then the model that should have to beat it. Ordered, because
