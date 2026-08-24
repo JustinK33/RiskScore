@@ -1,4 +1,4 @@
-"""Every route that only reads: scoring, identity, and health.
+"""Every route that only reads: scoring, identity, reports, and health.
 
 Read-only in the sense that matters for a threat model - nothing here writes to
 disk, starts a process, or changes what the next request will see. That is what
@@ -8,6 +8,11 @@ caller reach" reads this file and is done.
 Scoring is read-only despite being a POST. The verb is POST because the request
 body is an applicant's financial details, and a GET would put them in the query
 string, which proxies log and browsers keep in history.
+
+The report routes are deliberately thin. Every one of them is a name and a
+docstring over :func:`risk_score.api.reports.report_response`, because caching,
+ETag revalidation and path containment are the same problem for all seven and
+seven copies of that logic is seven places for one of them to be missing a guard.
 """
 
 from __future__ import annotations
@@ -15,16 +20,18 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 
 from risk_score.api.deps import ApplicantModelDep, ServiceDep, SettingsDep
+from risk_score.api.reports import report_response
 from risk_score.api.schemas import (
     ERROR_RESPONSES,
     BatchOut,
     BatchRequest,
     BatchRowOut,
+    ErrorOut,
     HealthOut,
     ModelIdentity,
     PredictionOut,
@@ -162,6 +169,105 @@ async def model_identity(service: ServiceDep) -> ModelIdentity:
 async def input_schema(service: ServiceDep) -> SchemaOut:
     """What ``/predict`` accepts, in a shape a form generator can consume."""
     return describe_spec(service.bundle.feature_spec, service.metadata.run_id)
+
+
+# --- reports -------------------------------------------------------------------
+
+#: Documented once for all seven report routes. ``?run_id=`` reads a past run
+#: instead of the active one, which is what makes the dashboard's run-history
+#: selector work without a separate endpoint per panel.
+RunIdDep = Annotated[
+    str | None,
+    Query(description="A past run to read instead of the active one.", max_length=120),
+]
+
+#: Shared by every report route. The payloads are columnar tables rather than
+#: declared models: their columns come from whatever the run wrote, so a pydantic
+#: response model would be a fourth copy of a schema that changes per run.
+_REPORT_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **ERROR_RESPONSES,
+    200: {
+        "content": {"application/json": {}},
+        "description": "Columnar tables: one array per column, plus the run id.",
+    },
+    304: {"description": "The ETag matched; the client's copy is current."},
+    404: {"model": ErrorOut, "description": "No such run, or this run has no such report."},
+}
+
+
+@router.get(
+    "/api/metrics", responses=_REPORT_RESPONSES, tags=["reports"], summary="Headline metrics"
+)
+async def metrics(request: Request, run_id: RunIdDep = None) -> Response:
+    """Everything ``metrics.json`` records: scores, split sizes, embargo counts."""
+    return report_response(request, "metrics", run_id)
+
+
+@router.get(
+    "/api/calibration", responses=_REPORT_RESPONSES, tags=["reports"], summary="Calibration curves"
+)
+async def calibration(request: Request, run_id: RunIdDep = None) -> Response:
+    """Both curves, keyed by partition, with per-bin counts.
+
+    ``test`` is ``null`` rather than absent when the test window held too few
+    positives to bin - a partial report, which the dashboard renders as a gap
+    rather than as a zero.
+    """
+    return report_response(request, "calibration", run_id)
+
+
+@router.get(
+    "/api/threshold-costs",
+    responses=_REPORT_RESPONSES,
+    tags=["reports"],
+    summary="Cost curve over candidate thresholds",
+)
+async def threshold_costs(request: Request, run_id: RunIdDep = None) -> Response:
+    """The validation cost curve the selected threshold was chosen from.
+
+    Validation only, and there is no test variant to ask for: a cost curve over
+    test scores is the artifact that would let somebody pick a threshold on test
+    by eye, which is the leak this project's split exists to prevent.
+    """
+    return report_response(request, "threshold-costs", run_id)
+
+
+@router.get(
+    "/api/vintages", responses=_REPORT_RESPONSES, tags=["reports"], summary="Metrics by vintage"
+)
+async def vintages(request: Request, run_id: RunIdDep = None) -> Response:
+    """Per-origination-quarter default rate and metrics, after the embargo."""
+    return report_response(request, "vintages", run_id)
+
+
+@router.get("/api/drift", responses=_REPORT_RESPONSES, tags=["reports"], summary="PSI")
+async def drift(request: Request, run_id: RunIdDep = None) -> Response:
+    """Score PSI and per-feature PSI, with the 0.10 / 0.25 bands attached."""
+    return report_response(request, "drift", run_id)
+
+
+@router.get(
+    "/api/shap-summary", responses=_REPORT_RESPONSES, tags=["reports"], summary="Global SHAP"
+)
+async def shap_summary(request: Request, run_id: RunIdDep = None) -> Response:
+    """Mean absolute SHAP per feature: what drives the model overall."""
+    return report_response(request, "shap-summary", run_id)
+
+
+@router.get(
+    "/api/comparison", responses=_REPORT_RESPONSES, tags=["reports"], summary="Model comparison"
+)
+async def comparison(request: Request, run_id: RunIdDep = None) -> Response:
+    """LR against XGBoost on an identical split. 404 on a plain train run.
+
+    404 rather than an empty object, because "this run compared nothing" and "the
+    two models scored the same" are different answers and a client cannot tell
+    them apart from ``{}``.
+    """
+    return report_response(request, "comparison", run_id)
+
+
+# --- health --------------------------------------------------------------------
 
 
 @router.get("/healthz", response_model=HealthOut, tags=["health"], summary="Liveness")

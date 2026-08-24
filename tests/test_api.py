@@ -30,7 +30,13 @@ from pydantic import ValidationError
 from risk_score.api import Settings, create_app
 from risk_score.api.app import summarize_validation_errors
 from risk_score.api.deps import require_api_key
+from risk_score.api.reports import REPORTS, RUN_ID_PATTERN
 from risk_score.pipeline import RunResult
+
+#: Every report a plain ``riskscore train`` writes. ``comparison`` is excluded
+#: because only ``riskscore compare`` produces it, and its absence is asserted
+#: separately as a 404.
+TRAIN_REPORTS = tuple(name for name in REPORTS if name != "comparison")
 
 # --- 1. scoring ----------------------------------------------------------------
 
@@ -431,7 +437,201 @@ def test_validation_summary_never_quotes_a_value() -> None:
     assert summary == "annual_inc: bad"
 
 
-# --- 5. OpenAPI ----------------------------------------------------------------
+# --- 5. reports ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", TRAIN_REPORTS)
+def test_every_train_report_is_served(
+    client: TestClient, trained_run: RunResult, name: str
+) -> None:
+    """Parametrized over the allowlist, so a new report cannot be added untested.
+
+    The run id in the envelope is the assertion that matters beyond the 200: a
+    payload that does not say which run it describes is a chart nobody can trust
+    after a retrain.
+    """
+    response = client.get(f"/api/{name}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["run_id"] == trained_run.metadata.run_id
+    assert set(body) - {"run_id"}, "a report with no parts is a route that does nothing"
+
+
+def test_report_tables_are_columnar(client: TestClient) -> None:
+    """One array per column, not one object per row.
+
+    The encoding is the point: the threshold cost table is 99 rows of six numbers,
+    and a row-per-object body repeats every key 99 times.
+    """
+    validation = client.get("/api/threshold-costs").json()["validation"]
+
+    assert isinstance(validation, dict)
+    assert "threshold" in validation
+    lengths = {len(column) for column in validation.values()}
+    assert len(lengths) == 1, "every column of one table must have the same length"
+    assert lengths.pop() > 1
+
+
+def test_metrics_payload_carries_the_embargo_counts(client: TestClient) -> None:
+    """The project's headline correction has to be visible over HTTP.
+
+    An embargo that only appears in a local CSV is a claim; one the dashboard can
+    render is evidence.
+    """
+    metrics = client.get("/api/metrics").json()["metrics"]
+
+    assert "embargo_rows_immature" in metrics
+    assert "default_rate_by_vintage_before_embargo" in metrics
+    assert "default_rate_by_vintage_after_embargo" in metrics
+
+
+def test_report_etag_answers_304(client: TestClient) -> None:
+    first = client.get("/api/metrics")
+    etag = first.headers["etag"]
+
+    second = client.get("/api/metrics", headers={"If-None-Match": etag})
+
+    assert etag.startswith('W/"'), "gzip is applied downstream, so the validator is weak"
+    assert second.status_code == 304
+    assert second.content == b""
+    assert second.headers["etag"] == etag
+
+
+def test_report_etag_tolerates_a_proxy_rewriting_the_validator(client: TestClient) -> None:
+    """A proxy may strip ``W/`` or send a list; both still match."""
+    etag = client.get("/api/metrics").headers["etag"]
+    opaque = etag.removeprefix("W/")
+
+    assert client.get("/api/metrics", headers={"If-None-Match": opaque}).status_code == 304
+    assert (
+        client.get("/api/metrics", headers={"If-None-Match": f'"other", {etag}'}).status_code == 304
+    )
+
+
+def test_report_etags_differ_per_report(client: TestClient) -> None:
+    """Two reports of one run must not share a validator.
+
+    They would if the ETag came from the run's mtime alone, and a client that had
+    fetched metrics would then be told its calibration copy was current.
+    """
+    etags = {name: client.get(f"/api/{name}").headers["etag"] for name in TRAIN_REPORTS}
+
+    assert len(set(etags.values())) == len(etags)
+
+
+def test_report_cache_notices_a_rewritten_file(
+    client: TestClient, trained_run: RunResult, tmp_path: Path
+) -> None:
+    """The cache is keyed on file identity, so a rewrite must change the answer.
+
+    Written to a copy of the run rather than to the session's own directory,
+    which every other test treats as read-only. This is the property a TTL cache
+    cannot have: no stale window, and nothing to tune.
+    """
+    import shutil
+
+    reports = tmp_path / "reports"
+    shutil.copytree(trained_run.run_dir.parent.parent, reports)
+    run_dir = reports / "runs" / trained_run.metadata.run_id
+    settings = Settings(reports_dir=reports, log_level="WARNING")
+
+    with TestClient(create_app(settings), raise_server_exceptions=False) as local:
+        before = local.get("/api/vintages")
+        table = run_dir / "metrics_by_vintage.csv"
+        table.write_text(table.read_text() + table.read_text().splitlines()[-1] + "\n")
+        after = local.get("/api/vintages")
+
+    assert before.status_code == after.status_code == 200
+    assert after.headers["etag"] != before.headers["etag"]
+    assert (
+        len(after.json()["vintages"]["partition"])
+        == len(before.json()["vintages"]["partition"]) + 1
+    )
+
+
+def test_active_run_revalidates_and_a_named_run_is_immutable(
+    client: TestClient, trained_run: RunResult
+) -> None:
+    """A run directory never changes; "the active run" is a pointer that moves."""
+    active = client.get("/api/metrics")
+    named = client.get("/api/metrics", params={"run_id": trained_run.metadata.run_id})
+
+    assert active.headers["cache-control"] == "no-cache"
+    assert "immutable" in named.headers["cache-control"]
+    assert named.json() == active.json()
+
+
+def test_comparison_is_404_on_a_plain_train_run(client: TestClient) -> None:
+    """404, not ``{}``: "nothing was compared" is not "the models tied"."""
+    response = client.get("/api/comparison")
+
+    assert response.status_code == 404
+    assert set(response.json()) == {"detail", "request_id"}
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    ["../../etc", "..", ".", "nope", "runs/x", "a" * 200, ""],
+)
+def test_report_refuses_a_bad_run_id(client: TestClient, run_id: str) -> None:
+    """Traversal, absent runs and oversized ids are all one 404.
+
+    One status for all of them on purpose: distinguishing "malformed" from
+    "absent" tells a scanner which of its guesses had the right shape.
+    """
+    response = client.get("/api/metrics", params={"run_id": run_id})
+
+    assert response.status_code in {404, 422}
+    assert "/" not in response.json()["detail"]
+
+
+def test_report_run_id_never_escapes_the_runs_directory(tmp_path: Path) -> None:
+    """A symlink out of ``runs/`` is refused by the containment check.
+
+    ``RUN_ID_PATTERN`` accepts ``"sneaky"`` - it is ordinary characters - so a 404
+    here can only have come from the resolved-path check. That is the point of
+    having two guards: the pattern anticipates traversal syntax, and containment
+    catches what it did not anticipate.
+    """
+    assert RUN_ID_PATTERN.match("sneaky"), "otherwise this test proves the wrong guard"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "metrics.json").write_text("{}")
+    runs = tmp_path / "reports" / "runs"
+    runs.mkdir(parents=True)
+    (runs / "sneaky").symlink_to(outside, target_is_directory=True)
+
+    settings = Settings(reports_dir=tmp_path / "reports", log_level="WARNING")
+    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
+        response = client.get("/api/metrics", params={"run_id": "sneaky"})
+
+    assert response.status_code == 404
+
+
+def test_reports_are_503_with_no_active_run(tmp_path: Path) -> None:
+    settings = Settings(reports_dir=tmp_path / "empty", log_level="WARNING")
+    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
+        response = client.get("/api/metrics")
+
+    assert response.status_code == 503
+    assert "riskscore train" in response.json()["detail"]
+
+
+def test_report_payloads_contain_no_nan_token(client: TestClient) -> None:
+    """``json.dumps`` writes a bare ``NaN`` by default, which ``JSON.parse`` rejects.
+
+    One missing metric would then take out a whole dashboard panel, so the payload
+    is serialized with ``allow_nan=False`` over already-nulled values. Asserted on
+    the raw text: ``response.json()`` accepts ``NaN`` and would hide the bug.
+    """
+    for name in TRAIN_REPORTS:
+        text = client.get(f"/api/{name}").text
+        assert "NaN" not in text
+        assert "Infinity" not in text
+
+
+# --- 6. OpenAPI ----------------------------------------------------------------
 
 
 def test_openapi_describes_the_loaded_model(client: TestClient, trained_run: RunResult) -> None:
@@ -452,7 +652,7 @@ def test_docs_can_be_switched_off(api_settings: Settings) -> None:
         assert client.get("/openapi.json").status_code == 404
 
 
-# --- 6. settings ---------------------------------------------------------------
+# --- 7. settings ---------------------------------------------------------------
 
 
 def test_public_bind_is_refused_without_the_flag() -> None:

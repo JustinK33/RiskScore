@@ -40,6 +40,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from risk_score.api.reports import clear_cache as clear_report_cache
 from risk_score.api.routes_public import router as public_router
 from risk_score.api.schemas import ErrorOut, build_applicant_model
 from risk_score.api.scoring import ScoringService
@@ -239,6 +240,11 @@ def load_service(app: FastAPI) -> None:
     app.state.service = None
     app.state.applicant_model = None
     app.state.load_error = None
+    # The report cache invalidates itself by file fingerprint, so this is not
+    # required for correctness. It is here because a new active run means the
+    # previous one's entries will never be read again, and a bounded cache holding
+    # them is one that evicts the run everybody is looking at.
+    clear_report_cache()
     # Cleared so /docs regenerates against the new input contract; FastAPI caches
     # the document on first request and would otherwise describe the old model
     # forever.
