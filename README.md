@@ -30,19 +30,18 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Place Lending Club data under `data/raw/`, then run the baseline:
+No download is needed to try it.
+`make-sample-data` writes a synthetic extract shaped like the real one, including the survivorship bias the pipeline has to correct for:
 
 ```bash
-python scripts/run_baseline.py \
-  --raw-data-path data/raw/lending_club_loans.csv \
-  --train-end-date 2016-12-31 \
-  --test-start-date 2017-01-01
+riskscore make-sample-data data/sample/loans.csv
+riskscore train data/sample/loans.csv
+riskscore runs
 ```
 
-Pass `--model-type xgboost` to run XGBoost instead. Then start the dashboard:
+For the real thing, place the Lending Club extract under `data/raw/` and point `train` at it.
+Pass `--model xgboost` to fit XGBoost instead, and `--include-lender-priced` to admit the interest rate and grade - features that are the lender's own price, so they are excluded by default.
 
-```bash
-python scripts/serve_dashboard.py
-```
-
-Open `http://127.0.0.1:8765`.
+Each run publishes an immutable directory under `reports/runs/<run_id>/` holding the model, its calibration, the threshold it selected, and every metric and figure.
+`riskscore runs` lists them and marks the active one; `riskscore activate <run_id>` rolls back to an earlier one without retraining.
+`riskscore --help` documents the rest.

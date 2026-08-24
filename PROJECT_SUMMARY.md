@@ -27,9 +27,9 @@ The project now also includes a lightweight local dashboard that lets users visu
 
 The project is organized as a Python package under `src/risk_score`.
 
-The command-line entrypoint lives in `scripts/run_baseline.py`.
+The command-line entrypoint lives in `src/risk_score/cli.py` and installs as `riskscore`.
 
-The local dashboard server lives in `scripts/serve_dashboard.py`.
+The dashboard server is being replaced by a FastAPI service; the previous `scripts/serve_dashboard.py` retrained the model on unauthenticated uploaded CSV on the request thread and has been removed.
 
 Static dashboard assets live under `dashboard/`.
 
@@ -209,13 +209,9 @@ The fitted model is written to `reports/models/logistic_regression.joblib`.
 
 ## Dashboard
 
-The dashboard is a static frontend served by a small Python HTTP server.
+The dashboard is a static frontend with no Node, React, Vite, or frontend build step.
 
-It does not require Node, React, Vite, or a frontend build step.
-
-The server is started with `python scripts/serve_dashboard.py`.
-
-The default dashboard URL is `http://127.0.0.1:8765`.
+It has no server at the moment: the hand-rolled `http.server` that used to serve it is gone, and the FastAPI service that replaces it is not built yet.
 
 The dashboard reads metrics from `/api/metrics`.
 
@@ -239,29 +235,26 @@ After a successful upload run, the dashboard refreshes to show the latest metric
 
 ## Command-Line Usage
 
-Run the logistic regression baseline with a compatible CSV.
+Write a synthetic extract and fit the logistic regression baseline on it.
 
 ```bash
-python scripts/run_baseline.py \
-  --raw-data-path data/raw/lending_club_loans.csv \
-  --train-end-date 2016-12-31 \
-  --test-start-date 2017-01-01
+riskscore make-sample-data data/sample/loans.csv
+riskscore train data/sample/loans.csv
 ```
 
-Run the baseline with the dataset schema alias config.
+Fit against a real extract with a run configuration.
+
+The split windows, cost matrix, feature tier, and column aliases all live in that one file, so there is no second place a window can be specified and disagree.
 
 ```bash
-python scripts/run_baseline.py \
-  --raw-data-path data/raw/my_loans.csv \
-  --train-end-date 2016-12-31 \
-  --test-start-date 2017-01-01 \
-  --schema-config configs/run.yaml
+riskscore train data/raw/1/loan.csv --config configs/run.yaml
 ```
 
-Start the dashboard.
+List the published runs and roll serving back to an earlier one.
 
 ```bash
-python scripts/serve_dashboard.py
+riskscore runs
+riskscore activate 20260824T101530123Z-logistic_regression-origination_only-02e3a94
 ```
 
 Run tests.

@@ -193,6 +193,11 @@ def train_run(
     config = config or RunConfig()
     root = Path(output_dir)
     dataset = Path(raw_data_path)
+    # Same reason as the model-type check: the first thing the run does otherwise
+    # is create `output_dir/runs/`, so a mistyped path used to leave an empty
+    # report tree behind and the error arrived from inside the staging block.
+    if not dataset.is_file():
+        raise FileNotFoundError(f"No extract at {dataset}")
     commit = git_commit()
     # One instant, two spellings: the run id needs a filename-safe basic form and
     # the manifest needs the extended one the registry sorts by. Taking the clock
