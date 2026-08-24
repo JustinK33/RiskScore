@@ -451,6 +451,36 @@ def build_model_pipeline(
     )
 
 
+def categorical_choices(pipeline: Pipeline) -> dict[str, list[str]]:
+    """Every category the fitted encoder saw, per categorical column.
+
+    Exists so ``/api/schema`` can describe a categorical input as a closed set and
+    the dashboard can render a ``<select>`` instead of a text box. That is not
+    cosmetic: ``handle_unknown="infrequent_if_exist"`` means a typo like ``"rent"``
+    for ``"RENT"`` is accepted, pooled into the infrequent bucket, and scored -
+    quietly, with no error and a plausible-looking probability. A caller building a
+    form from this list cannot make that mistake.
+
+    Returns an empty mapping rather than raising when the pipeline has no
+    categorical branch, because a spec may legitimately declare none.
+    """
+    steps = dict(pipeline.steps)
+    preprocess = steps.get("preprocess")
+    if preprocess is None:
+        return {}
+    encoder = preprocess.named_transformers_.get("categorical")
+    if encoder is None:
+        return {}
+    # `categories_` is aligned with the column list this branch was given, which is
+    # `spec.categorical_features` in declared order - read back off the fitted
+    # transformer rather than re-derived, so the two cannot disagree.
+    columns = next(cols for name, _, cols in preprocess.transformers_ if name == "categorical")
+    return {
+        str(column): [str(category) for category in categories]
+        for column, categories in zip(columns, encoder.categories_, strict=True)
+    }
+
+
 def engineering_prefix(pipeline: Pipeline) -> Pipeline:
     """The ``canonicalize -> engineer`` prefix of a fitted pipeline.
 

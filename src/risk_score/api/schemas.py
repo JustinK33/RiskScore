@@ -22,6 +22,7 @@ What that buys, concretely:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, create_model
@@ -266,6 +267,11 @@ class SchemaFieldOut(BaseModel):
     aliases: list[str]
     minimum: float | None = None
     maximum: float | None = None
+    #: Every category the fitted encoder saw, for a categorical field. `None` for
+    #: any other kind. A client should render this as a closed choice: an unseen
+    #: category is accepted and pooled into the infrequent bucket rather than
+    #: rejected, so a typo scores silently instead of erroring.
+    choices: list[str] | None = None
 
 
 class SchemaOut(BaseModel):
@@ -373,13 +379,19 @@ class ErrorOut(BaseModel):
     request_id: str
 
 
-def describe_spec(spec: FeatureSpec, run_id: str) -> SchemaOut:
+def describe_spec(
+    spec: FeatureSpec, run_id: str, choices: Mapping[str, list[str]] | None = None
+) -> SchemaOut:
     """The input contract as data, for a client that builds a form from it.
 
     The same information ``/docs`` carries, in a shape a form generator can use
     without parsing JSON Schema. It exists because the dashboard's
     score-an-applicant panel has to render fields for whichever bundle is active,
     and a hand-written form would be the copy of the column list that drifts.
+
+    ``choices`` comes from the *fitted* encoder (``modeling.categorical_choices``),
+    which is why it is a parameter rather than read off the spec: the spec declares
+    which columns are categorical, but only the fit knows what was in them.
     """
     required = set(spec.required_raw_inputs)
     fields = []
@@ -396,6 +408,7 @@ def describe_spec(spec: FeatureSpec, run_id: str) -> SchemaOut:
                 aliases=[key for key in alias_priority(name) if key != name],
                 minimum=low,
                 maximum=high,
+                choices=(choices or {}).get(name),
             )
         )
     return SchemaOut(

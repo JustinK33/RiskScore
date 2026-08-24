@@ -173,6 +173,28 @@
           <div class="artifact-links" id="artifactLinks"></div>
         </aside>
       </section>
+
+      <h2 class="section-heading" id="scoreHeading">Score an applicant</h2>
+      <p class="section-note">
+        Posts to <code>POST /predict</code> - the same endpoint and the same loaded bundle a
+        client would call. Every field below was generated from
+        <code>GET /api/schema</code>, so it describes the model actually being served rather
+        than a form written alongside it. Optional fields left blank are imputed, not
+        treated as zero.
+      </p>
+      <section class="panel score-panel" aria-labelledby="scoreHeading">
+        <form id="scoreForm">
+          <p class="banner" id="scoreBanner" hidden></p>
+          <div id="scoreFields" class="form-body">
+            <p class="hint">Loading the input schema.</p>
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="scoreSubmit">Score</button>
+            <button type="button" id="scoreExample" class="ghost">Load an example</button>
+          </div>
+        </form>
+        <div id="scoreResult" class="score-result"></div>
+      </section>
     </main>
 
     <footer class="footer">

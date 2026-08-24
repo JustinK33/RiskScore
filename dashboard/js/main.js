@@ -42,6 +42,7 @@ import {
 } from "./dom.js";
 import { count, number, percent, shortRunId, timestamp } from "./format.js";
 import { drawCalibration, drawThresholdCosts } from "./panels.js";
+import { mountScorePanel } from "./score.js";
 
 /**
  * Everything fetched, keyed by nothing but its own name.
@@ -470,6 +471,18 @@ async function boot() {
   // reflowing, and once when the layout first settles - which is the moment a
   // canvas finally has a width to be sized against.
   observeResize([$("#calibrationChart"), $("#thresholdChart")], redraw);
+
+  // Not awaited alongside the reports: the score panel needs only `/api/schema`,
+  // and a reader who came to try a prediction should not wait on seven report
+  // fetches for the form to appear.
+  mountScorePanel({
+    form: $("#scoreForm"),
+    body: $("#scoreFields"),
+    banner: $("#scoreBanner"),
+    result: $("#scoreResult"),
+    exampleButton: $("#scoreExample"),
+    submitButton: $("#scoreSubmit"),
+  });
 
   try {
     await load(runIdFromUrl());

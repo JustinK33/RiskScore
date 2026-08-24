@@ -54,6 +54,7 @@ from risk_score.artifacts import (
     read_active_run_id,
     read_registry,
 )
+from risk_score.modeling import categorical_choices
 
 _log = logging.getLogger(__name__)
 
@@ -181,7 +182,14 @@ async def model_identity(service: ServiceDep) -> ModelIdentity:
 )
 async def input_schema(service: ServiceDep) -> SchemaOut:
     """What ``/predict`` accepts, in a shape a form generator can consume."""
-    return describe_spec(service.bundle.feature_spec, service.metadata.run_id)
+    # Read off the fitted encoder per request rather than cached on the service:
+    # it is a few dozen string conversions, this route is not on the hot path, and
+    # a cache keyed to the bundle is one more thing to invalidate on a retrain.
+    return describe_spec(
+        service.bundle.feature_spec,
+        service.metadata.run_id,
+        categorical_choices(service.bundle.pipeline),
+    )
 
 
 # --- reports -------------------------------------------------------------------

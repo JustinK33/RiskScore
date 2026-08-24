@@ -624,6 +624,255 @@ main {
   background: var(--surface-soft);
 }
 
+/* --- the score-an-applicant form ---
+ *
+ * `auto-fill` with a 200px floor, so the field count is set by the schema and the
+ * column count by the viewport. A generated form must not assume how many fields
+ * there are: swapping to the lender-priced tier adds four.
+ *
+ * `auto-fill` rather than `auto-fit`, which is the difference between a tidy form
+ * and a broken-looking one: `auto-fit` collapses the empty tracks, so the
+ * one-field TIMELINE group stretched a month picker across 1500px. `auto-fill`
+ * keeps them, and every control is the same width in every group.
+ */
+
+.form-body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.field-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-4);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * Subgrid, so the labels, the controls, and the hints each share a row across the
+ * whole group.
+ *
+ * Without it a `.field` is stretched to its grid row's height and, having only
+ * `auto` rows, distributes that free space *between* them - so a field sitting
+ * beside a two-line hint had its input pushed 17px lower than its neighbour's.
+ * Every control on a row now sits on one line.
+ *
+ * Behind `@supports` because `span 3` without subgrid support would make each
+ * field claim three rows of the parent and shatter the layout, which is a worse
+ * failure than the misalignment it fixes.
+ */
+@supports (grid-template-rows: subgrid) {
+  .field-group .field {
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+    align-content: start;
+  }
+}
+
+.field-group legend {
+  padding: 0 var(--space-2);
+  color: var(--accent-strong);
+  font-size: var(--text-sm);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.field-group .field label {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-weight: 700;
+}
+
+/* A required marker that is not colour-only, and carries its meaning in a title
+   rather than in the shape of a glyph. */
+.required {
+  margin-left: 2px;
+  color: var(--danger);
+  text-decoration: none;
+}
+
+.field-group .field .hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* --- the prediction result --- */
+
+.score-result:empty {
+  display: none;
+}
+
+.score-result {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: var(--border);
+}
+
+.verdict {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: var(--border);
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+/* The decision is the one thing on this page a reader acts on, so it gets the
+   tone - and the word, never the colour alone. */
+.verdict[data-decision="approve"] {
+  border-left-color: var(--ok);
+}
+
+.verdict[data-decision="decline"] {
+  border-left-color: var(--danger);
+}
+
+.verdict > div {
+  display: grid;
+  gap: var(--space-1);
+  align-content: start;
+}
+
+.verdict strong {
+  font-size: var(--text-2xl);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.verdict-decision strong {
+  color: var(--accent-strong);
+}
+
+.verdict[data-decision="decline"] .verdict-decision strong {
+  color: var(--danger);
+}
+
+.verdict small {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+/* --- reason codes ---
+ *
+ * A tornado plot in two half-width tracks. No canvas: five signed numbers with long
+ * labels are a table, and a table reflows at 320px where rotated axis text does
+ * not.
+ */
+
+/*
+ * Every cell centres on one line, and the row header stays a real `table-cell`.
+ *
+ * It was a `display: grid` first, to stack the name over the label. That takes the
+ * cell out of the table's row box: the bar rendered at the top of its row, the
+ * value in the middle, and each cell drew its bottom border at a different height,
+ * so the table looked like three tables side by side. Stacking is done by making
+ * the two children blocks instead, which changes nothing about the table model.
+ */
+.reason-table td,
+.reason-table th {
+  vertical-align: middle;
+}
+
+.reason-table th[scope="row"] {
+  white-space: normal;
+  /* The feature name is a snake_case identifier in a monospace font, so it offers no
+     break opportunity: `credit_history_months` alone sets a 180px min-content width
+     and pushed the table 7px past its panel at 320px. */
+  overflow-wrap: anywhere;
+}
+
+.reason-table th[scope="row"] code {
+  display: block;
+  font-size: var(--text-base);
+}
+
+/* A `<th>` inherits the table's bold; the label is prose about the feature, not part
+   of its name, so it is reset to body weight here rather than relying on `.hint`. */
+.reason-table th[scope="row"] .hint {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+}
+
+/* A share rather than a fixed width, so the plot scales with the panel while the
+   three text columns keep their content widths. */
+.tornado-cell {
+  min-width: 140px;
+  width: 30%;
+}
+
+.tornado {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  /* Taller than the 14px bar, so the centre rule below shows above and below it and
+     reads as an axis rather than disappearing behind the bar it anchors. */
+  min-height: 22px;
+}
+
+.tornado-left,
+.tornado-right {
+  display: flex;
+  align-items: center;
+}
+
+.tornado-left {
+  justify-content: flex-end;
+  border-right: 1px solid var(--line-strong);
+}
+
+.bar {
+  height: 14px;
+  border-radius: 2px;
+}
+
+/* Green reduces, orange increases - and the sign is in the adjacent column, so the
+   colour is a second encoding rather than the only one. */
+.bar-down {
+  background: var(--ok);
+}
+
+.bar-up {
+  background: var(--warn);
+}
+
+/*
+ * Below 640px the tornado column is dropped rather than scrolled.
+ *
+ * Measured, not guessed: at 320px the content box is about 256px, and the row
+ * header alone wants 34ch. Keeping the plot there cost 250px of horizontal
+ * document overflow - the exact failure the probe exists to catch. The bars are a
+ * *second* encoding of the signed log-odds, which is still present as text in the
+ * last column, so nothing is lost by removing them; a sideways-scrolling primary
+ * result would lose more.
+ */
+@media (max-width: 640px) {
+  .reason-table .tornado-cell,
+  .reason-table .tornado-head {
+    display: none;
+  }
+
+  /* The label is a full sentence, so it has to be allowed to wrap here even though
+     every other table on the page is `nowrap`. */
+  .reason-table td,
+  .reason-table th {
+    white-space: normal;
+    padding: var(--space-2);
+  }
+}
+
 /* --- buttons --- */
 
 button {

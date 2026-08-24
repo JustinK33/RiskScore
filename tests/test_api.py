@@ -254,6 +254,30 @@ def test_schema_describes_every_accepted_input(
     assert required <= set(applicant)
 
 
+def test_schema_offers_categories_as_a_closed_set(
+    client: TestClient, trained_run: RunResult
+) -> None:
+    """Every categorical field carries the categories the encoder actually saw.
+
+    A form built from this renders a `<select>`, which is the only thing that stops
+    a typo scoring silently: `handle_unknown="infrequent_if_exist"` accepts `"rent"`
+    for `"RENT"`, pools it, and returns a plausible probability.
+    """
+    fields = {field["name"]: field for field in client.get("/api/schema").json()["fields"]}
+    spec = trained_run.bundle.feature_spec
+
+    # Intersected with the raw inputs on purpose: `fico_band` is a categorical
+    # *feature* but not an input - it is engineered from `fico_range_*`, so there is
+    # no form field for it and nothing for a client to choose.
+    for name in set(spec.categorical_features) & set(fields):
+        assert fields[name]["choices"], f"{name} is categorical but advertises no choices"
+    assert set(spec.categorical_features) & set(fields), "no categorical input to check"
+    # Non-categorical fields say `null` rather than an empty list, so a client can
+    # test the field itself rather than its length.
+    assert fields["loan_amnt"]["choices"] is None
+    assert "RENT" in fields["home_ownership"]["choices"]
+
+
 def test_schema_kinds_are_form_kinds(client: TestClient) -> None:
     """Seven parse kinds collapse to the four a form can render."""
     kinds = {field["kind"] for field in client.get("/api/schema").json()["fields"]}

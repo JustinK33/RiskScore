@@ -293,11 +293,11 @@ _SPECS: tuple[ColumnSpec, ...] = (
         tier=FeatureTier.BORROWER,
         parse=ParseKind.MONTH_DATE,
         aliases=("earliest_credit_line", "earliestcrline"),
-        description=(
-            "First credit line opened. Used only to derive credit_history_months; "
-            "never a feature itself, because as a raw string it has 655 distinct "
-            "values in the real extract (audit B01)."
-        ),
+        # Descriptions are user-facing: `/api/schema` serves them and the dashboard
+        # renders each one under its input. The reason this column is never a feature
+        # itself - 655 distinct values as a raw string, audit B01 - belongs in the
+        # module docstring and in transformers.py, not in a hint beside a form field.
+        description="First credit line opened. Sets credit_history_months.",
     ),
     ColumnSpec(
         name="total_credit_utilized",
@@ -318,10 +318,10 @@ _SPECS: tuple[ColumnSpec, ...] = (
         tier=FeatureTier.BORROWER,
         parse=ParseKind.NUMERIC,
         aliases=("ficorangelow",),
-        description=(
-            "Lower bound of the origination FICO band. Absent from both real "
-            "extracts in data/raw/, so the pipeline must work without it."
-        ),
+        # Same rule as `earliest_cr_line` above: the fact that both real extracts in
+        # `data/raw/` lack this column - so the pipeline must work without it - is a
+        # note for whoever maintains the spec, not for whoever fills in the form.
+        description="Lower bound of the origination FICO band.",
     ),
     ColumnSpec(
         name="fico_range_high",
@@ -714,10 +714,10 @@ ENGINEERED_FEATURES: tuple[EngineeredFeature, ...] = (
         # bureau-style balance and limit are kept, because the levels carry
         # signal the ratio does not.
         consumes=("revol_util",),
-        description=(
-            "Revolving utilization as a fraction. Falls back to "
-            "total_credit_utilized / total_credit_limit when revol_util is absent."
-        ),
+        # Both sources are named because which one produced the value changes how a
+        # reader reads it, but it is kept to one clause: this string is a reason-code
+        # label, and on a phone every extra clause is another wrapped line.
+        description="Revolving utilization as a fraction, from revol_util or the bureau balance.",
     ),
     EngineeredFeature(
         name="loan_to_income_ratio",
@@ -730,10 +730,10 @@ ENGINEERED_FEATURES: tuple[EngineeredFeature, ...] = (
         name="credit_history_months",
         requires=("earliest_cr_line", "issue_d"),
         consumes=("earliest_cr_line",),
-        description=(
-            "Months between first credit line and origination. Replaces a raw "
-            "date string that would otherwise be one-hot encoded into 655 columns."
-        ),
+        # Kept to one clause because this string is the label beside the feature in a
+        # reason-code row, where the reader is asking "what is this?" and not "why was
+        # it engineered?". The why is `consumes` plus the module docstring.
+        description="Months between first credit line and origination.",
     ),
     EngineeredFeature(
         name="fico_midpoint",

@@ -7,6 +7,11 @@
  * the plan states: no horizontal overflow at any width in either theme, every
  * canvas actually sized, every panel populated, and no console error.
  *
+ * It also drives the score panel end to end - load the example, submit, wait for a
+ * verdict - because the form is generated from `/api/schema` at runtime, so nothing
+ * short of a real browser talking to a real server proves the generated controls
+ * round-trip their values back into a request the model accepts.
+ *
  * Not a pytest test, and deliberately not in CI: it needs a running server and an
  * installed Chrome. It is the pixel-perfection check to run by hand after touching
  * the dashboard.
@@ -78,9 +83,53 @@ const PROBE = `(() => {
       (t) => t.querySelectorAll("tbody tr").length,
     ),
     banners: [...document.querySelectorAll(".banner:not([hidden])")].map((n) => n.textContent),
+    scoreFields: document.querySelectorAll("#scoreFields .field").length,
+    // Every categorical must be a select. A text box there is the typo-pooling
+    // hole the /api/schema choices list exists to close, and it looks identical
+    // in a screenshot.
+    scoreSelects: document.querySelectorAll("#scoreFields select").length,
+    scoreGroups: document.querySelectorAll("#scoreFields fieldset").length,
+    verdict: document.querySelector("#scoreResult .verdict")?.dataset.decision || "",
+    reasonRows: document.querySelectorAll("#scoreResult .reason-table tbody tr").length,
+    // A bar with no width is a reason code the reader cannot see; the renderer has
+    // a 2% floor precisely so this can never be 0. Bars in the tornado column that
+    // the narrow layout drops are not rendered at all, so they are excluded rather
+    // than counted - the log-odds text is the reading at those widths.
+    narrowBars: [...document.querySelectorAll("#scoreResult .bar")].filter(
+      (bar) => bar.getClientRects().length > 0 && bar.getBoundingClientRect().width < 1,
+    ).length,
     offenders: offenders.slice(0, 5),
     canvases,
   });
+})()`;
+
+/**
+ * Drive the score panel the way a reader does: load the example, submit, wait for
+ * a verdict. Returns "" on success or the reason it failed.
+ *
+ * This is the only automated check that the generated form is submittable at all.
+ * `buildForm` reads its values back out of live DOM nodes, so a control whose
+ * `value` does not round-trip - a `type="month"` given "Jun-2015", a required
+ * select with no matching option - produces either a browser validation block or a
+ * 422, and both are invisible to a unit test.
+ */
+const SCORE = `(async () => {
+  const example = document.querySelector("#scoreExample");
+  const form = document.querySelector("#scoreForm");
+  if (!example || !form) return "the score panel is absent";
+  example.click();
+  const missing = [...form.elements].filter((node) => node.willValidate && !node.checkValidity());
+  if (missing.length) {
+    return "the example does not satisfy the form: " + missing.map((n) => n.name).join(", ");
+  }
+  form.requestSubmit();
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (document.querySelector("#scoreResult .verdict")) return "";
+    const banner = document.querySelector("#scoreBanner:not([hidden])");
+    if (banner && banner.dataset.tone === "danger") return "POST /predict: " + banner.textContent;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return "no verdict rendered within 10s";
 })()`;
 
 /** One CDP session against a fresh tab. */
@@ -112,6 +161,12 @@ async function session(width, height, theme) {
 
   await send("Runtime.enable");
   await send("Log.enable");
+  // The profile directory persists between runs, and the server sends an ETag with
+  // no `Cache-Control`, so Chrome heuristically reuses a stylesheet it already has.
+  // That made this script report a CSS fix as still broken - a probe that reads
+  // stale bytes is worse than no probe, so the cache is off for every session.
+  await send("Network.enable");
+  await send("Network.setCacheDisabled", { cacheDisabled: true });
   await send("Emulation.setDeviceMetricsOverride", {
     width,
     height,
@@ -142,13 +197,25 @@ async function session(width, height, theme) {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
+  // Score after the report panels have settled, then re-probe: the verdict and the
+  // reason table are the tallest things this page can add, and their overflow has to
+  // be measured with them present.
+  const scored = await send("Runtime.evaluate", {
+    expression: SCORE,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  const scoreError = scored.result?.result?.value ?? "the score probe did not return";
+  const after = await send("Runtime.evaluate", { expression: PROBE, returnByValue: true });
+  result = JSON.parse(after.result.result.value);
+
   const consoleErrors = events
     .filter((event) => event.method === "Log.entryAdded" && event.params.entry.level === "error")
     .map((event) => event.params.entry.text);
 
   socket.close();
   await fetch(`http://127.0.0.1:${PORT}/json/close/${target.id}`);
-  return { ...result, consoleErrors };
+  return { ...result, scoreError, consoleErrors };
 }
 
 const chrome = spawn(
@@ -202,6 +269,12 @@ try {
       if (report.identityRows !== 6) problems.push(`${report.identityRows} identity rows, want 6`);
       if (report.artifacts !== 12) problems.push(`${report.artifacts} artifact links, want 12`);
       if (report.tables.some((rows) => rows === 0)) problems.push("an empty fallback table");
+      if (report.scoreFields < 4) problems.push(`${report.scoreFields} score fields, want the schema's`);
+      if (report.scoreSelects < 1) problems.push("no categorical rendered as a select");
+      if (report.scoreError) problems.push(report.scoreError);
+      if (!report.verdict) problems.push("no decision in the verdict block");
+      if (report.reasonRows === 0) problems.push("a verdict with no reason codes");
+      if (report.narrowBars) problems.push(`${report.narrowBars} reason bar(s) render at zero width`);
       if (report.consoleErrors.length) problems.push(`console: ${report.consoleErrors[0]}`);
 
       const mark = problems.length ? "FAIL" : "ok  ";
@@ -210,7 +283,10 @@ try {
         `${mark} ${theme.padEnd(5)} ${String(width).padStart(4)}px  ` +
           `scroll=${report.scrollWidth} bg=${report.background} ` +
           `canvas=${report.canvases.map((c) => c.cssWidth).join("/")} ` +
-          `tables=${report.tables.join("/")} banners=${report.banners.length}`,
+          `tables=${report.tables.join("/")} ` +
+          `score=${report.scoreFields}f/${report.scoreGroups}g/${report.scoreSelects}s ` +
+          `verdict=${report.verdict || "none"}/${report.reasonRows}r ` +
+          `banners=${report.banners.length}`,
       );
       for (const problem of problems) console.log(`       - ${problem}`);
     }
