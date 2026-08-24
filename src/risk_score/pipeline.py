@@ -1,4 +1,4 @@
-"""End-to-end orchestration: read an extract, fit a model, report on holdout.
+"""End-to-end orchestration: read an extract, fit a model, publish a run.
 
 This module holds no logic of its own beyond ordering, and the order is the
 point (see ``docs/architecture.md``)::
@@ -10,7 +10,7 @@ point (see ``docs/architecture.md``)::
       TEST       score once, report, never fit anything.
 
 Every row filter sits left of the split, so all three partitions share one
-outcome definition. Four properties are worth stating because all four were
+outcome definition. Five properties are worth stating because all five were
 previously violated:
 
 * **Immature loans are removed before anything else.** Filtering to closed
@@ -26,17 +26,43 @@ previously violated:
 * **Feature engineering is not done here.** It happens inside the fitted
   ``Pipeline``, so the artifact this writes is self-contained and ``POST
   /predict`` cannot preprocess a request differently from how the model was fit.
+* **The output is one atomic run directory, not a tree of loose files.** The old
+  run wrote ``reports/models/logistic_regression.joblib`` and overwrote it on the
+  next invocation, with the threshold in a separate JSON that a reader could pair
+  with the wrong pickle. A run now publishes a
+  :class:`~risk_score.artifacts.ScoringBundle` under an immutable id, and becomes
+  visible only once it is complete - so a dashboard polling the tree can never
+  read new metrics against an old calibration curve.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import joblib
 import pandas as pd
 
+from risk_score.artifacts import (
+    DEFAULT_RETENTION,
+    HEADLINE_METRICS,
+    RunMetadata,
+    ScoringBundle,
+    build_run_id,
+    dataset_fingerprint,
+    feature_tier,
+    git_commit,
+    library_versions,
+    now_iso,
+    prune_runs,
+    prune_staging,
+    register_run,
+    save_bundle,
+    staged_run,
+)
 from risk_score.calibration import (
     build_calibration_report,
     fit_calibrator,
@@ -44,10 +70,14 @@ from risk_score.calibration import (
 )
 from risk_score.config import RunConfig
 from risk_score.data_loading import (
+    DEFAULT_STATUSES,
+    PAID_STATUSES,
+    EmbargoResult,
     apply_outcome_maturity_embargo,
     create_default_target,
+    filter_to_closed_loans,
     filter_to_terms,
-    load_lending_club_data,
+    read_raw_loans,
 )
 from risk_score.evaluation import (
     ClassificationMetrics,
@@ -60,8 +90,53 @@ from risk_score.evaluation import (
     select_threshold_by_cost,
 )
 from risk_score.leakage_check import audit_columns
+from risk_score.logging_setup import bind_run_id, capture_run_log
 from risk_score.modeling import SUPPORTED_MODEL_TYPES, split_by_time, train_model
 from risk_score.transformers import build_feature_spec
+
+LOGGER = logging.getLogger(__name__)
+
+#: File names inside a run directory. Named here rather than inlined because the
+#: API serves them from an allowlist and the dashboard fetches them by name, so
+#: there is one spelling of each.
+METRICS_FILENAME = "metrics.json"
+CALIBRATION_TEST_FILENAME = "calibration_test.csv"
+CALIBRATION_VALIDATION_FILENAME = "calibration_validation.csv"
+THRESHOLD_COSTS_FILENAME = "threshold_costs_validation.csv"
+CALIBRATION_FIGURE = "figures/calibration_test.png"
+RUN_LOG_FILENAME = "run.log"
+
+
+@dataclass(frozen=True, slots=True)
+class RunResult:
+    """What a completed run is, for the caller that started it.
+
+    The ``run_id`` is here because the CLI, the model card, and the API's
+    rollback all need to name the run afterwards, and deriving it a second time
+    would produce a different timestamp.
+    """
+
+    run_id: str
+    run_dir: Path
+    metrics: ClassificationMetrics
+    metadata: RunMetadata
+    bundle: ScoringBundle
+    #: The full ``metrics.json`` payload, so a caller does not read back a file
+    #: it just wrote.
+    payload: dict[str, Any]
+
+
+def target_definition() -> str:
+    """The label rule, in words, for the manifest and the model card.
+
+    Built from the status sets rather than written out, because a hand-written
+    copy is one edit away from describing a different label than the one the run
+    used - and it is the manifest's job to be trustworthy about exactly that.
+    """
+    return (
+        f"1 = {sorted(DEFAULT_STATUSES)}; 0 = {sorted(PAID_STATUSES)}; "
+        "any other status is excluded rather than treated as repaid"
+    )
 
 
 def _predict_default_probability(estimator: Any, features: pd.DataFrame) -> pd.Series:
@@ -76,14 +151,16 @@ def _predict_default_probability(estimator: Any, features: pd.DataFrame) -> pd.S
     return pd.Series(probabilities, index=features.index, name="default_probability")
 
 
-def run_baseline_pipeline(
+def train_run(
     raw_data_path: str | Path,
     *,
     config: RunConfig | None = None,
     output_dir: str | Path = "reports",
     model_type: str = "logistic_regression",
-) -> ClassificationMetrics:
-    """Fit one model on one extract and write its metrics and figures.
+    make_active: bool = True,
+    keep_runs: int = DEFAULT_RETENTION,
+) -> RunResult:
+    """Fit one model on one extract and publish it as a run directory.
 
     Everything the run varies - split windows, cost matrix, hyperparameters,
     feature tier, extra column aliases - arrives in one validated
@@ -95,22 +172,88 @@ def run_baseline_pipeline(
     ``installment``. Off by default: they are the lender's own price, so a model
     using them cannot score an applicant nobody has priced yet. See
     ``docs/decisions/0005-lender-priced-feature-tier.md``.
+
+    ``make_active=False`` publishes and registers the run without pointing the
+    service at it, which is what ``riskscore compare`` needs: it fits two models
+    and only one of them should be served.
     """
-    # Checked before anything is created, so a typo leaves no half-written
-    # report tree behind.
+    # Checked before anything is created, so a typo leaves no half-written run
+    # directory behind.
     if model_type not in SUPPORTED_MODEL_TYPES:
         raise ValueError(
             f"Supported model types are {list(SUPPORTED_MODEL_TYPES)}; got {model_type!r}."
         )
 
     config = config or RunConfig()
-    output_path = Path(output_dir)
-    metrics_path = output_path / "metrics"
-    figures_path = output_path / "figures"
-    models_path = output_path / "models"
-    for directory in (metrics_path, figures_path, models_path):
-        directory.mkdir(parents=True, exist_ok=True)
+    root = Path(output_dir)
+    dataset = Path(raw_data_path)
+    commit = git_commit()
+    # One instant, two spellings: the run id needs a filename-safe basic form and
+    # the manifest needs the extended one the registry sorts by. Taking the clock
+    # twice would let them disagree by a second.
+    started_at = datetime.now(UTC)
+    run_id = build_run_id(
+        model_type=model_type,
+        include_lender_priced=config.include_lender_priced,
+        created_at=started_at,
+        commit=commit,
+    )
+    # Anything left by a previous SIGKILL - an OOM during a fit on the real
+    # extract - is swept here rather than by a cron nobody wrote. Age-gated, so a
+    # fit running in another process is never touched.
+    prune_staging(root)
 
+    # The log is written *inside* the staging directory - context managers are
+    # entered left to right, so `staging` is already bound - which means it is
+    # published by the same rename as the metrics, and a failed run discards its
+    # log along with the artifacts it describes.
+    with (
+        bind_run_id(run_id),
+        staged_run(root, run_id) as staging,
+        capture_run_log(staging / RUN_LOG_FILENAME),
+    ):
+        result = _execute_run(
+            dataset,
+            staging=staging,
+            config=config,
+            model_type=model_type,
+            run_id=run_id,
+            created_at=now_iso(started_at),
+            commit=commit,
+        )
+
+    register_run(
+        root,
+        metadata=result.metadata,
+        metrics={key: result.payload[key] for key in HEADLINE_METRICS},
+        make_active=make_active,
+    )
+    removed = prune_runs(root, keep=keep_runs)
+    if removed:
+        LOGGER.info("retention removed %d run(s)", len(removed), extra={"removed": removed})
+    return RunResult(
+        run_id=run_id,
+        run_dir=root / "runs" / run_id,
+        metrics=result.metrics,
+        metadata=result.metadata,
+        bundle=result.bundle,
+        payload=result.payload,
+    )
+
+
+def _execute_run(
+    dataset: Path,
+    *,
+    staging: Path,
+    config: RunConfig,
+    model_type: str,
+    run_id: str,
+    created_at: str,
+    commit: str,
+) -> RunResult:
+    """The run itself, writing into ``staging``. Split out so the atomicity and
+    retention wiring above stays readable, and so every ``return`` inside it is
+    still covered by the staging directory's cleanup."""
     cost_matrix = config.cost_matrix
     include_lender_priced = config.include_lender_priced
     date_column = config.split.date_column
@@ -120,10 +263,14 @@ def run_baseline_pipeline(
     # share one outcome definition. A filter applied per partition is how two
     # partitions end up answering different questions (see modeling.py's "What
     # must NOT live here").
-    loans = load_lending_club_data(
-        raw_data_path,
-        column_aliases=config.column_aliases or None,
+    raw, schema_report = read_raw_loans(dataset, column_aliases=config.column_aliases or None)
+    rows: dict[str, int] = {"raw": len(raw)}
+    loans = filter_to_closed_loans(raw)
+    rows["closed"] = len(loans)
+    LOGGER.info(
+        "read %d rows, %d closed", rows["raw"], rows["closed"], extra={"dataset": str(dataset)}
     )
+
     # The correction this project exists to demonstrate. "Closed" is measured
     # against the extract's snapshot, so a loan too young to have finished paying
     # can only be closed by having defaulted - and the resulting bias grows with
@@ -132,12 +279,16 @@ def run_baseline_pipeline(
     embargo = apply_outcome_maturity_embargo(
         loans, snapshot=config.data.snapshot, date_column=date_column
     )
+    rows["mature"] = len(embargo.loans)
     # Downstream of the embargo, not an independent choice: 60-month loans survive
     # it only in the earliest vintages, so training on them and never seeing one
     # in validation or test is a term-mix cliff, not extra data.
     loans = filter_to_terms(embargo.loans, terms=config.data.term_months_in)
+    rows["in_scope_terms"] = len(loans)
     loans = loans.assign(default_flag=create_default_target(loans))
     loans = loans.dropna(subset=["default_flag"])
+    rows["labelled"] = len(loans)
+    LOGGER.info("%s", embargo.summary())
 
     # The audit is a record, not a filter. What actually keeps a post-origination
     # column out of the model is that `build_feature_spec` never puts one in the
@@ -160,6 +311,12 @@ def run_baseline_pipeline(
         validation=config.split.validation,
         test=config.split.test,
     )
+    rows.update(
+        train=len(split.x_train),
+        validation=len(split.x_validation),
+        test=len(split.x_test),
+    )
+    LOGGER.info("%s", split.summary())
 
     # The whole split goes in, and `train_model` decides what each model type is
     # allowed to see: the logistic baseline gets train only, XGBoost additionally
@@ -171,12 +328,6 @@ def run_baseline_pipeline(
     # wrapper, so the partition a fitted object came from is stated at the call
     # site rather than assumed.
     calibrator = fit_calibrator(model, split.validation)
-    # Two files, and they cannot drift: the calibrator holds this exact `model`
-    # object by reference inside its FrozenEstimator, so the pickle contains both.
-    # The bare pipeline is written too because it is the only way to inspect the
-    # fitted preprocessing without unwrapping a calibrator.
-    joblib.dump(model, models_path / f"{model_type}.joblib")
-    joblib.dump(calibrator, models_path / f"{model_type}_calibrator.joblib")
 
     # --- 3. the decision rule, chosen on validation only ------------------------
     # Scored through the calibrator, because that is what serving compares to the
@@ -218,11 +369,58 @@ def run_baseline_pipeline(
         # population being scored, not of the population the rule was tuned on.
         approval_rate=float((scores_test < threshold).mean()),
     )
+    LOGGER.info(
+        "test auc_roc=%.4f brier=%.4f approval_rate=%.3f",
+        metrics.auc_roc,
+        metrics.brier_score,
+        metrics.approval_rate,
+    )
 
     calibration_test = build_calibration_report(split.y_test, scores_test)
     calibration_validation = build_calibration_report(split.y_validation, scores_validation)
 
-    metrics_payload = {
+    # --- 5. publish -------------------------------------------------------------
+    embargo_report = _embargo_summary(embargo)
+    metadata = RunMetadata(
+        run_id=run_id,
+        created_at=created_at,
+        model_type=model_type,
+        feature_tier=feature_tier(include_lender_priced),
+        git_commit=commit,
+        dataset_path=str(dataset),
+        dataset_sha256=dataset_fingerprint(dataset),
+        dataset_bytes=dataset.stat().st_size,
+        target_definition=target_definition(),
+        rows=rows,
+        split_windows={window.name: window.label() for window in split.windows},
+        embargo=embargo_report,
+        cost_matrix={
+            "false_negative_cost": cost_matrix.false_negative_cost,
+            "false_positive_cost": cost_matrix.false_positive_cost,
+        },
+        features={
+            "tier": feature_tier(include_lender_priced),
+            "summary": spec.summary(),
+            "model_features": list(spec.model_features),
+            "numeric": list(spec.numeric_features),
+            "categorical": list(spec.categorical_features),
+            "raw_inputs": list(spec.raw_inputs),
+            "leakage": leakage_audit.summary(),
+            "schema": schema_report.summary(),
+        },
+        library_versions=library_versions(),
+    )
+    bundle = ScoringBundle(
+        pipeline=model,
+        calibrator=calibrator,
+        threshold=threshold,
+        feature_spec=spec,
+        metadata=metadata,
+    )
+    save_bundle(bundle, staging)
+
+    payload = {
+        "run_id": run_id,
         "auc_roc": metrics.auc_roc,
         "average_precision": metrics.average_precision,
         "ks_statistic": metrics.ks_statistic,
@@ -248,40 +446,60 @@ def run_baseline_pipeline(
         "model_type": model_type,
         # Sample sizes travel with the metrics because a 0.71 AUC on 116 rows
         # with one positive is not the same claim as 0.71 on 40,000.
-        "rows_train": len(split.x_train),
-        "rows_validation": len(split.x_validation),
-        "rows_test": len(split.x_test),
+        "rows_train": rows["train"],
+        "rows_validation": rows["validation"],
+        "rows_test": rows["test"],
+        "rows": rows,
         "split": split.summary(),
         "features": spec.summary(),
         "leakage": leakage_audit.summary(),
         "include_lender_priced": include_lender_priced,
         # The embargo's own numbers, because "we corrected for survivorship bias"
-        # is an assertion and these two dicts are the evidence. Years are stringly
-        # keyed because JSON object keys are strings either way, and doing it here
-        # keeps the round-trip symmetric.
-        "embargo": embargo.summary(),
-        "embargo_snapshot": str(embargo.snapshot.date()),
-        "embargo_rows_immature": embargo.rows_immature,
-        "embargo_rows_unknown_maturity": embargo.rows_unknown_maturity,
-        "default_rate_by_vintage_before_embargo": {
+        # is an assertion and these dicts are the evidence.
+        "embargo": embargo_report["summary"],
+        "embargo_snapshot": embargo_report["snapshot"],
+        "embargo_rows_immature": embargo_report["rows_immature"],
+        "embargo_rows_unknown_maturity": embargo_report["rows_unknown_maturity"],
+        "default_rate_by_vintage_before_embargo": embargo_report["default_rate_by_vintage_before"],
+        "default_rate_by_vintage_after_embargo": embargo_report["default_rate_by_vintage_after"],
+        "term_months_in": list(config.data.term_months_in),
+        "rows_after_embargo_and_term_filter": rows["in_scope_terms"],
+    }
+    (staging / METRICS_FILENAME).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    calibration_test.curve.to_csv(staging / CALIBRATION_TEST_FILENAME, index=False)
+    calibration_validation.curve.to_csv(staging / CALIBRATION_VALIDATION_FILENAME, index=False)
+    threshold_costs.to_csv(staging / THRESHOLD_COSTS_FILENAME, index=False)
+    # `plot_calibration_curve` writes where it is told and does not create
+    # directories, which is correct for a plotting helper and means the caller
+    # makes the subdirectory.
+    (staging / "figures").mkdir(parents=True, exist_ok=True)
+    plot_calibration_curve(calibration_test.curve, output_path=staging / CALIBRATION_FIGURE)
+
+    return RunResult(
+        run_id=run_id,
+        run_dir=staging,
+        metrics=metrics,
+        metadata=metadata,
+        bundle=bundle,
+        payload=payload,
+    )
+
+
+def _embargo_summary(embargo: EmbargoResult) -> dict[str, Any]:
+    """The embargo's numbers, for the manifest and for ``metrics.json``.
+
+    Years are stringly keyed because JSON object keys are strings either way, and
+    converting here keeps a round-trip through the file symmetric.
+    """
+    return {
+        "summary": embargo.summary(),
+        "snapshot": str(embargo.snapshot.date()),
+        "rows_immature": embargo.rows_immature,
+        "rows_unknown_maturity": embargo.rows_unknown_maturity,
+        "default_rate_by_vintage_before": {
             str(year): rate for year, rate in embargo.default_rate_before.items()
         },
-        "default_rate_by_vintage_after_embargo": {
+        "default_rate_by_vintage_after": {
             str(year): rate for year, rate in embargo.default_rate_after.items()
         },
-        "term_months_in": list(config.data.term_months_in),
-        "rows_after_embargo_and_term_filter": len(loans),
     }
-    (metrics_path / f"{model_type}_metrics.json").write_text(
-        json.dumps(metrics_payload, indent=2),
-        encoding="utf-8",
-    )
-
-    calibration_test.curve.to_csv(metrics_path / f"{model_type}_calibration.csv", index=False)
-    threshold_costs.to_csv(metrics_path / f"{model_type}_threshold_costs.csv", index=False)
-    plot_calibration_curve(
-        calibration_test.curve,
-        output_path=figures_path / f"{model_type}_calibration.png",
-    )
-
-    return metrics

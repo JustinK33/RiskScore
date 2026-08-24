@@ -107,6 +107,12 @@ LOCK_TIMEOUT_SECONDS = 10.0
 LOCK_STALE_SECONDS = 60.0
 LOCK_POLL_SECONDS = 0.05
 
+#: The metrics lifted into the registry, so the run-history table renders from
+#: one file instead of from N metrics files. One tuple rather than two lists,
+#: because `register_run` and `rebuild_registry` disagreeing would mean a
+#: rebuilt index quietly showing different columns than a freshly written one.
+HEADLINE_METRICS = ("auc_roc", "brier_score", "expected_calibration_error")
+
 #: Libraries whose version changes the numbers a bundle produces, so a run that
 #: cannot be reproduced can at least be explained.
 _TRACKED_LIBRARIES = ("numpy", "pandas", "scikit-learn", "scipy", "xgboost", "joblib")
@@ -557,7 +563,7 @@ def register_run(
         if make_active:
             _write_json_atomic(
                 root_path / ACTIVE_RUN_FILENAME,
-                {"run_id": metadata.run_id, "activated_at": _now_iso()},
+                {"run_id": metadata.run_id, "activated_at": now_iso()},
             )
     return entry
 
@@ -577,7 +583,7 @@ def set_active_run(root: str | Path, run_id: str) -> None:
             )
         _write_json_atomic(
             root_path / ACTIVE_RUN_FILENAME,
-            {"run_id": run_id, "activated_at": _now_iso()},
+            {"run_id": run_id, "activated_at": now_iso()},
         )
 
 
@@ -639,11 +645,7 @@ def rebuild_registry(root: str | Path) -> list[dict[str, Any]]:
         if metrics_path.exists():
             try:
                 loaded = json.loads(metrics_path.read_text(encoding="utf-8"))
-                metrics = {
-                    key: loaded[key]
-                    for key in ("auc_roc", "brier_score", "expected_calibration_error")
-                    if key in loaded
-                }
+                metrics = {key: loaded[key] for key in HEADLINE_METRICS if key in loaded}
             except json.JSONDecodeError:
                 metrics = {}
         entries.append(
@@ -700,6 +702,11 @@ def prune_runs(
     return doomed
 
 
-def _now_iso() -> str:
-    """UTC, seconds resolution, ``Z`` suffix. One spelling everywhere."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+def now_iso(when: datetime | None = None) -> str:
+    """UTC, seconds resolution, ``Z`` suffix. One spelling of a timestamp.
+
+    Public because the pipeline stamps ``created_at`` with it, and the registry
+    sorts runs by that string: two spellings of the same instant - extended here,
+    basic in the run id - would sort into two separate groups.
+    """
+    return (when or datetime.now(UTC)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
