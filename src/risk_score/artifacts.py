@@ -324,8 +324,14 @@ def save_bundle(bundle: ScoringBundle, run_dir: str | Path) -> Path:
     directory = Path(run_dir)
     directory.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, directory / BUNDLE_FILENAME)
+    # Insertion order, deliberately not sorted. `rows` is the filter pipeline in
+    # the order it ran and `split_windows` is train, validation, test - so
+    # alphabetising them puts `closed` before `raw` and `test` first, and anything
+    # re-rendering the card from this file (`riskscore card`) prints the stages in
+    # an order that reads as nonsense. The order is produced by code, so it is
+    # stable across runs either way and diffs stay clean.
     (directory / MANIFEST_FILENAME).write_text(
-        json.dumps(bundle.metadata.to_dict(), indent=2, sort_keys=True) + "\n",
+        json.dumps(bundle.metadata.to_dict(), indent=2) + "\n",
         encoding="utf-8",
     )
     return directory / BUNDLE_FILENAME
@@ -500,17 +506,24 @@ def _registry_lock(
         return
 
 
-def _write_json_atomic(path: Path, payload: Any) -> None:
+def write_json_atomic(path: Path, payload: Any) -> None:
     """Replace ``path`` in one step, never truncating the reader's view.
 
     A plain ``write_text`` on ``active_run.json`` has a window in which the file
     is zero bytes, and the service reads that file at boot. Temp file plus
     ``os.replace`` removes the window; the temp file is a sibling so the rename
     stays within one filesystem.
+
+    Public because the same window exists for every root-level report the service
+    serves - ``comparison.json`` in particular, which is rewritten in place by
+    each ``riskscore compare`` while a dashboard may be polling it.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Insertion order for the same reason as the manifest: `comparison.json` lists
+    # its metrics in the order they are displayed, and the writer builds every
+    # payload here in code, so the output is deterministic without sorting.
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     with temporary.open("rb") as handle:
         os.fsync(handle.fileno())
     temporary.replace(path)
@@ -567,9 +580,9 @@ def register_run(
         existing = [
             item for item in read_registry(root_path) if item.get("run_id") != entry["run_id"]
         ]
-        _write_json_atomic(root_path / REGISTRY_FILENAME, [*existing, entry])
+        write_json_atomic(root_path / REGISTRY_FILENAME, [*existing, entry])
         if make_active:
-            _write_json_atomic(
+            write_json_atomic(
                 root_path / ACTIVE_RUN_FILENAME,
                 {"run_id": metadata.run_id, "activated_at": now_iso()},
             )
@@ -589,7 +602,7 @@ def set_active_run(root: str | Path, run_id: str) -> None:
             raise ValueError(
                 f"Unknown run {run_id!r}. Known runs: {sorted(str(item) for item in known)}."
             )
-        _write_json_atomic(
+        write_json_atomic(
             root_path / ACTIVE_RUN_FILENAME,
             {"run_id": run_id, "activated_at": now_iso()},
         )
@@ -670,7 +683,7 @@ def rebuild_registry(root: str | Path) -> list[dict[str, Any]]:
         )
     entries.sort(key=lambda entry: str(entry.get("created_at", "")))
     with _registry_lock(root_path):
-        _write_json_atomic(root_path / REGISTRY_FILENAME, entries)
+        write_json_atomic(root_path / REGISTRY_FILENAME, entries)
     return entries
 
 
@@ -706,7 +719,7 @@ def prune_runs(
     if doomed:
         survivors = [entry for entry in entries if str(entry.get("run_id")) not in set(doomed)]
         with _registry_lock(root_path):
-            _write_json_atomic(root_path / REGISTRY_FILENAME, survivors)
+            write_json_atomic(root_path / REGISTRY_FILENAME, survivors)
     return doomed
 
 

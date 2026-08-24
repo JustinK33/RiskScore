@@ -22,6 +22,7 @@ import pytest
 from risk_score.artifacts import read_active_run_id, read_registry
 from risk_score.cli import EXIT_USER_ERROR, TRAIN_SUMMARY_KEYS, build_parser, main
 from risk_score.pipeline import METRICS_FILENAME
+from risk_score.reporting import COMPARISON_FILENAME, MODEL_CARD_FILENAME
 
 #: The synthetic default of 4000 rows takes a few seconds to fit; these tests are
 #: about argument handling, so they use the smallest extract that still yields
@@ -65,7 +66,10 @@ def test_a_bare_invocation_is_a_usage_error_not_a_crash() -> None:
     assert raised.value.code == 2
 
 
-@pytest.mark.parametrize("command", ["train", "runs", "activate", "make-sample-data"])
+@pytest.mark.parametrize(
+    "command",
+    ["train", "compare", "explain", "card", "runs", "activate", "make-sample-data"],
+)
 def test_every_subcommand_is_reachable_and_documented(
     command: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -367,3 +371,269 @@ def test_activate_refuses_a_run_whose_bundle_cannot_be_loaded(
         main(["activate", broken, "--output-dir", str(root)])
 
     assert read_active_run_id(root) == healthy
+
+
+# --- compare -------------------------------------------------------------------
+
+
+def test_compare_publishes_every_variant_and_activates_none(
+    tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One model under both tiers, which is the leakage measurement and needs no
+    XGBoost, so it runs on every machine.
+
+    Not activating is the assertion that matters: choosing what to serve is a
+    decision, and a comparison that silently repointed the service would mean
+    measuring the lender-priced variant put it into production.
+    """
+    root = tmp_path / "reports"
+    argv = [
+        "compare",
+        str(sample_csv),
+        "--output-dir",
+        str(root),
+        "--model",
+        "logistic_regression",
+        "--tiers",
+        "both",
+        "--no-cache",
+    ]
+
+    assert main(argv) == 0
+
+    tiers = {entry["feature_tier"] for entry in read_registry(root)}
+    assert tiers == {"origination_only", "with_lender_priced"}
+    assert read_active_run_id(root) is None
+
+    out = capsys.readouterr().out
+    assert "no run was activated" in out
+    # The measurement the flag exists for, printed rather than implied.
+    assert "lender-priced features add" in out
+    assert "best by AUC" in out
+
+
+def test_comparison_json_lands_at_the_report_root_and_is_parseable(
+    tmp_path: Path, sample_csv: Path
+) -> None:
+    """At the root, not inside a run: a run directory is immutable after its
+    atomic rename, and a comparison is a statement about several of them.
+
+    Parsed with the default `json.loads`, which rejects the bare `NaN` token
+    `json.dumps` would otherwise have written for a missing metric.
+    """
+    root = tmp_path / "reports"
+    main(
+        [
+            "compare",
+            str(sample_csv),
+            "--output-dir",
+            str(root),
+            "--model",
+            "logistic_regression",
+            "--tiers",
+            "both",
+            "--no-cache",
+        ]
+    )
+
+    payload = json.loads((root / COMPARISON_FILENAME).read_text(encoding="utf-8"))
+
+    assert not list(root.glob("runs/*/" + COMPARISON_FILENAME))
+    assert payload["baseline"] == "logistic_regression / origination_only"
+    assert len(payload["variants"]) == 2
+    assert [delta["model_type"] for delta in payload["lender_priced_delta"]] == [
+        "logistic_regression"
+    ]
+    assert payload["dataset_sha256"]
+
+
+def test_compare_does_not_delete_the_variants_it_is_comparing(
+    tmp_path: Path, sample_csv: Path
+) -> None:
+    """Retention runs once, at the end, with the comparison's own runs protected.
+    Applied per variant it would prune the baseline before the delta against it
+    was written."""
+    root = tmp_path / "reports"
+
+    assert (
+        main(
+            [
+                "compare",
+                str(sample_csv),
+                "--output-dir",
+                str(root),
+                "--model",
+                "logistic_regression",
+                "--tiers",
+                "both",
+                "--no-cache",
+                "--keep",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+    assert len(list((root / "runs").iterdir())) == 2
+
+
+def test_compare_rejects_an_unknown_model_at_the_parser(tmp_path: Path, sample_csv: Path) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(["compare", str(sample_csv), "--output-dir", str(tmp_path), "--model", "svm"])
+
+    assert raised.value.code == 2
+
+
+# --- explain -------------------------------------------------------------------
+
+
+def test_explain_scores_one_applicant_with_reason_codes(
+    tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(train(tmp_path, sample_csv))
+    capsys.readouterr()
+
+    assert main(["explain", str(sample_csv), "--output-dir", str(tmp_path / "reports")]) == 0
+
+    out = capsys.readouterr().out
+    assert "default probability" in out
+    assert "approve" in out or "decline" in out
+    assert "reason(s)" in out
+
+
+def test_explain_json_sums_its_reason_codes_into_the_score(
+    tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The property that makes a reason code usable in an adverse action notice:
+    the contributions are exact SHAP values, so they and the baseline reconstruct
+    the model's own log-odds rather than approximating it."""
+    main(train(tmp_path, sample_csv))
+    capsys.readouterr()
+
+    main(
+        [
+            "explain",
+            str(sample_csv),
+            "--output-dir",
+            str(tmp_path / "reports"),
+            "--row",
+            "3",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert 0.0 <= payload["default_probability"] <= 1.0
+    assert payload["decision"] in {"approve", "decline"}
+    assert payload["reasons"]
+    assert all(
+        item["direction"] in {"increases risk", "reduces risk", "no effect"}
+        for item in payload["reasons"]
+    )
+    # Largest contribution first, which is the only ordering an adverse action
+    # notice can use: the reasons printed are the reasons that decided it.
+    magnitudes = [abs(item["log_odds"]) for item in payload["reasons"]]
+    assert magnitudes == sorted(magnitudes, reverse=True)
+    assert payload["threshold"] > 0.0
+
+
+def test_explain_needs_a_run_and_says_so(
+    tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A fresh clone has no active run, which is a normal state and not a bug."""
+    assert (
+        main(["explain", str(sample_csv), "--output-dir", str(tmp_path / "reports")])
+        == EXIT_USER_ERROR
+    )
+
+    captured = capsys.readouterr()
+    assert "riskscore train" in captured.err
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("row", ["-1", "999999"])
+def test_a_row_outside_the_extract_is_a_user_error(
+    row: str, tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Both ends checked here rather than left to pandas: a negative index would
+    silently explain the *last* row, and an index past the end would raise an
+    `IndexError` naming positional arithmetic nobody typed."""
+    main(train(tmp_path, sample_csv))
+    capsys.readouterr()
+
+    argv = [
+        "explain",
+        str(sample_csv),
+        "--output-dir",
+        str(tmp_path / "reports"),
+        "--row",
+        row,
+    ]
+    assert main(argv) == EXIT_USER_ERROR
+    assert "Traceback" not in capsys.readouterr().err
+
+
+# --- card ----------------------------------------------------------------------
+
+
+def test_card_prints_the_active_runs_card_with_no_placeholder_left(
+    tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(train(tmp_path, sample_csv))
+    run_id = read_active_run_id(tmp_path / "reports")
+    capsys.readouterr()
+
+    assert main(["card", "--output-dir", str(tmp_path / "reports")]) == 0
+
+    card = capsys.readouterr().out
+    assert card.startswith(f"# Model card: `{run_id}`")
+    # The plan's acceptance check. Generating the markdown in code is what makes
+    # it hold; the assertion is what keeps it holding.
+    assert "$" not in card
+    assert "## Limitations" in card
+
+
+def test_the_published_card_and_the_rerendered_one_agree_on_the_numbers(
+    tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`card` re-renders from metrics.json rather than printing model_card.md, so
+    the layout follows this build. On an unchanged build the two are identical,
+    which is what proves the run published the same document the command
+    produces."""
+    main(train(tmp_path, sample_csv))
+    root = tmp_path / "reports"
+    run_id = read_active_run_id(root)
+    assert run_id is not None
+    capsys.readouterr()
+
+    main(["card", run_id, "--output-dir", str(root)])
+
+    published = (root / "runs" / run_id / MODEL_CARD_FILENAME).read_text(encoding="utf-8")
+    assert capsys.readouterr().out == published
+
+
+def test_card_writes_to_a_file_on_request(
+    tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(train(tmp_path, sample_csv))
+    destination = tmp_path / "nested" / "card.md"
+    capsys.readouterr()
+
+    assert (
+        main(["card", "--output-dir", str(tmp_path / "reports"), "--output", str(destination)]) == 0
+    )
+
+    assert destination.read_text(encoding="utf-8").startswith("# Model card:")
+    assert str(destination) in capsys.readouterr().out
+
+
+def test_card_for_an_unknown_run_is_a_user_error(
+    tmp_path: Path, sample_csv: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(train(tmp_path, sample_csv))
+    capsys.readouterr()
+
+    assert (
+        main(["card", "no-such-run", "--output-dir", str(tmp_path / "reports")]) == EXIT_USER_ERROR
+    )
+    assert "no-such-run" in capsys.readouterr().err

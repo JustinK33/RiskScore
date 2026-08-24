@@ -193,6 +193,23 @@ def test_the_manifest_is_readable_without_unpickling_anything(tmp_path: Path) ->
     assert read_manifest(tmp_path) == make_metadata()
 
 
+def test_the_manifest_keeps_the_order_its_dicts_were_built_in(tmp_path: Path) -> None:
+    """`rows` is the filter pipeline in the order it ran, so the order is data.
+
+    Written with `sort_keys=True` the round trip returned `closed` before `raw`,
+    and `riskscore card` - which re-renders from this file - printed the stages in
+    an order that reads as nonsense. Nothing here needs sorting for stable diffs:
+    the dicts are built by code.
+    """
+    stages = {"raw": 1200, "closed": 919, "mature": 708}
+    save_bundle(make_bundle(rows=stages, split_windows={"train": "a", "test": "b"}), tmp_path)
+
+    payload = json.loads((tmp_path / MANIFEST_FILENAME).read_text(encoding="utf-8"))
+
+    assert list(payload["rows"]) == ["raw", "closed", "mature"]
+    assert list(payload["split_windows"]) == ["train", "test"]
+
+
 def test_scoring_goes_through_the_calibrator_not_the_bare_pipeline(tmp_path: Path) -> None:
     """One scoring method, so a caller cannot pick the uncalibrated one. The stub
     pipeline returns 0.40 and the stub calibrator 0.25; the bundle must say 0.25."""

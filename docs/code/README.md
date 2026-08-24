@@ -57,6 +57,7 @@ Read these in order; each one hands its output to the next.
 | --- | --- | --- |
 | `src/risk_score/explain.py` | [explain.md](explain.md) | Exact SHAP without the `shap` package. Reason codes that sum back to the model's own score. |
 | `src/risk_score/drift.py` | [drift.md](drift.md) | PSI on the score and on every feature, and the per-vintage breakdown. Missingness is a bin. |
+| `src/risk_score/reporting.py` | [reporting.md](reporting.md) | The model card, the variant comparison, and the shapes the dashboard reads. Computes nothing. |
 
 ## Fixtures
 

@@ -11,6 +11,7 @@ Credit default risk scoring on Lending Club data: a leakage-aware training pipel
 | Know what a column means and where it comes from | [data-dictionary.md](data-dictionary.md) |
 | Run, deploy, retrain, or roll back | [runbook.md](runbook.md) |
 | Know why something was built this way | [decisions/](decisions/) |
+| See what a run actually reports | [examples/model_card.example.md](examples/model_card.example.md) |
 | Write code that matches the codebase | [conventions.md](conventions.md) |
 
 ## The short version

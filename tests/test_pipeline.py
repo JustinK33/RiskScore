@@ -154,6 +154,7 @@ def test_the_pipeline_writes_every_documented_artifact(raw_csv: Path, tmp_path: 
         "model.joblib",
         "manifest.json",
         "metrics.json",
+        "model_card.md",
         "calibration_test.csv",
         "calibration_validation.csv",
         "threshold_costs_validation.csv",

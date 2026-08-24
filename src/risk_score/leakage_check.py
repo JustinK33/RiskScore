@@ -80,7 +80,13 @@ class LeakageAudit:
 
     def summary(self) -> str:
         return (
-            f"features={len(self.admitted)} refused={len(self.refused)} "
+            # `admitted`, not `features`: this counts source columns that were
+            # allowed through, while `FeatureSpec.summary` counts the model's
+            # features - which include engineered ones with no source column of
+            # their own. Both numbers appear on the model card, and calling both
+            # of them "features" made a card that looked as if it contradicted
+            # itself.
+            f"admitted={len(self.admitted)} refused={len(self.refused)} "
             f"unclassified={len(self.unclassified)} "
             f"lender_priced={'on' if self.include_lender_priced else 'off'}"
         )

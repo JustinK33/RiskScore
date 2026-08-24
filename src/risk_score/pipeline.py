@@ -39,7 +39,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,7 @@ from risk_score.artifacts import (
     register_run,
     save_bundle,
     staged_run,
+    write_json_atomic,
 )
 from risk_score.cache import read_raw_loans_cached
 from risk_score.calibration import (
@@ -104,6 +106,13 @@ from risk_score.modeling import (
     split_by_time,
     train_model,
 )
+from risk_score.reporting import (
+    COMPARISON_FILENAME,
+    MODEL_CARD_FILENAME,
+    comparison_payload,
+    comparison_table,
+    render_model_card,
+)
 from risk_score.transformers import build_feature_spec
 
 LOGGER = logging.getLogger(__name__)
@@ -121,6 +130,11 @@ PSI_FEATURES_FILENAME = "psi_features.csv"
 VINTAGE_METRICS_FILENAME = "metrics_by_vintage.csv"
 CALIBRATION_FIGURE = "figures/calibration_test.png"
 RUN_LOG_FILENAME = "run.log"
+
+#: What ``riskscore compare`` fits when not told otherwise: the interpretable
+#: baseline first, then the model that should have to beat it. Ordered, because
+#: the first variant is the one every delta is measured against.
+DEFAULT_COMPARISON_MODELS = ("logistic_regression", "xgboost")
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +281,105 @@ def train_run(
         bundle=result.bundle,
         payload=result.payload,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonResult:
+    """Several published runs over one split, and the document comparing them."""
+
+    runs: tuple[RunResult, ...]
+    table: pd.DataFrame
+    payload: dict[str, Any]
+    #: Where ``comparison.json`` was written. At the report root, not inside a run
+    #: directory; see :mod:`risk_score.reporting` for why.
+    path: Path
+
+    @property
+    def baseline(self) -> RunResult:
+        """The first variant, which every delta is measured against."""
+        return self.runs[0]
+
+
+def compare_runs(
+    raw_data_path: str | Path,
+    *,
+    models: Sequence[str] = DEFAULT_COMPARISON_MODELS,
+    tiers: Sequence[bool] = (False,),
+    config: RunConfig | None = None,
+    output_dir: str | Path = "reports",
+    keep_runs: int = DEFAULT_RETENTION,
+    cache_dir: str | Path | None = None,
+) -> ComparisonResult:
+    """Fit every ``models`` x ``tiers`` variant on the same extract and compare them.
+
+    Two questions, one function, because both are "the same split under a
+    different setting":
+
+    * ``models=("logistic_regression", "xgboost")`` is the model comparison.
+    * ``tiers=(False, True)`` is the leakage-cost measurement - what admitting the
+      lender's own price adds to the AUC, which is the number ADR 0005's policy
+      should be argued with rather than around.
+
+    Every variant is published as an ordinary run and **none of them is
+    activated**. Choosing what to serve is a decision, and a compare command that
+    silently repointed the service would make it a side effect. The winner is
+    named in the result and activated with ``riskscore activate``.
+
+    The first variant is the baseline for every delta, so ``models`` and ``tiers``
+    are ordered arguments and not sets.
+    """
+    if not models:
+        raise ValueError("`models` must name at least one model type.")
+    if not tiers:
+        raise ValueError("`tiers` must contain at least one tier flag.")
+    root = Path(output_dir)
+    base_config = config or RunConfig()
+    # Model-major, so `tiers=(False, True)` reads as two variants of one model
+    # rather than interleaving the models. Either way the first pair is the
+    # baseline.
+    variants = [(model, tier) for model in models for tier in tiers]
+
+    runs: list[RunResult] = []
+    for model_type, include_lender_priced in variants:
+        LOGGER.info(
+            "comparison variant %d/%d: %s, %s",
+            len(runs) + 1,
+            len(variants),
+            model_type,
+            feature_tier(include_lender_priced),
+        )
+        runs.append(
+            train_run(
+                raw_data_path,
+                config=replace(base_config, include_lender_priced=include_lender_priced),
+                output_dir=root,
+                model_type=model_type,
+                make_active=False,
+                # Retention must not eat the comparison it is running inside. The
+                # policy is still applied, once, below - with every variant
+                # protected.
+                keep_runs=max(keep_runs, len(variants)),
+                # The first variant warms the parquet cache and the rest read it,
+                # which is what makes a four-variant comparison on the real extract
+                # one parse instead of four.
+                cache_dir=cache_dir,
+            )
+        )
+
+    table = comparison_table([run.payload for run in runs])
+    payload = {
+        "generated_at": now_iso(),
+        "dataset_path": str(Path(raw_data_path)),
+        "dataset_sha256": runs[0].metadata.dataset_sha256,
+        **comparison_payload([run.payload for run in runs]),
+    }
+    path = root / COMPARISON_FILENAME
+    write_json_atomic(path, payload)
+
+    removed = prune_runs(root, keep=keep_runs, protected=[run.run_id for run in runs])
+    if removed:
+        LOGGER.info("retention removed %d run(s)", len(removed), extra={"removed": removed})
+    return ComparisonResult(runs=tuple(runs), table=table, payload=payload, path=path)
 
 
 def _execute_run(
@@ -541,6 +654,12 @@ def _execute_run(
         "rows_train": rows["train"],
         "rows_validation": rows["validation"],
         "rows_test": rows["test"],
+        # The defaults, not just the rows. A ranking metric is driven by the
+        # positives, so 116 test rows carrying one default is the number a reader
+        # needs before quoting an AUC - and it is what `sanity_warnings` checks.
+        "positives_train": int(split.y_train.sum()),
+        "positives_validation": int(split.y_validation.sum()),
+        "positives_test": int(split.y_test.sum()),
         "rows": rows,
         "split": split.summary(),
         "features": spec.summary(),
@@ -575,6 +694,12 @@ def _execute_run(
         "psi_features_unstable": list(feature_psi.loc[feature_psi["band"] != "stable", "feature"]),
     }
     (staging / METRICS_FILENAME).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # Rendered from the payload and the manifest that were just built, not read
+    # back from the files: the card is part of the same atomic publication, so it
+    # cannot describe a different run than the metrics beside it.
+    (staging / MODEL_CARD_FILENAME).write_text(
+        render_model_card(payload, metadata, vintages=vintages), encoding="utf-8"
+    )
     calibration_test.curve.to_csv(staging / CALIBRATION_TEST_FILENAME, index=False)
     calibration_validation.curve.to_csv(staging / CALIBRATION_VALIDATION_FILENAME, index=False)
     threshold_costs.to_csv(staging / THRESHOLD_COSTS_FILENAME, index=False)
