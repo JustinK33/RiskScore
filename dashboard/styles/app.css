@@ -83,6 +83,28 @@ a {
   white-space: nowrap;
 }
 
+/*
+ * The skip link. Off-screen until focused, then it lands in the top-left corner.
+ * `top` is animated from a negative value rather than toggling `display`, because
+ * a `display: none` element is not focusable and the link would never appear.
+ */
+.skip-link {
+  position: absolute;
+  top: calc(var(--space-8) * -1);
+  left: var(--space-3);
+  z-index: 2;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--text-inverse);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.skip-link:focus-visible {
+  top: var(--space-3);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -113,8 +135,25 @@ a {
   text-transform: uppercase;
 }
 
+.tagline {
+  max-width: 62ch;
+  margin-top: var(--space-2);
+  color: var(--muted);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* The status pill wraps under the toggle rather than squeezing it, because the
+     longest status this page can show is a sentence naming a missing report. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .status {
   min-height: 32px;
+  max-width: 46ch;
   padding: var(--space-2) var(--space-3);
   border: var(--border);
   border-radius: var(--radius-sm);
@@ -123,16 +162,238 @@ a {
   font-size: var(--text-base);
 }
 
+/*
+ * The four states `setStatus` can set. Colour is never the only signal - the text
+ * itself always says what happened - so a monochrome or colour-blind reading loses
+ * nothing.
+ */
+.status[data-state="ok"] {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.status[data-state="warn"] {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
 .status[data-state="error"] {
   border-color: var(--danger);
   background: var(--danger-soft);
   color: var(--danger);
 }
 
+/* A secondary button: the theme toggle and anything else that is not the primary
+   action of its panel. */
+button.ghost {
+  border: var(--border);
+  background: var(--surface-soft);
+  color: var(--text);
+  font-weight: 700;
+}
+
+button.ghost:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 main {
   width: min(var(--content-width), 100%);
   margin: 0 auto;
   padding: var(--space-6) var(--space-7) var(--space-8);
+}
+
+/* --- banners ---
+ *
+ * `[data-tone]` rather than a class per tone, so `setBanner` sets one attribute
+ * and cannot leave a stale `.warn` behind next to a fresh `.danger`. A left border
+ * carries the tone as well as the background, which survives a forced-colours
+ * mode where background-color is overridden.
+ */
+
+.banner {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border);
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: var(--text-md);
+}
+
+.banner[data-tone="ok"] {
+  border-left-color: var(--ok);
+  background: var(--accent-soft);
+}
+
+.banner[data-tone="warn"] {
+  border-left-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.banner[data-tone="danger"] {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* --- identity strip --- */
+
+.identity {
+  margin-bottom: var(--space-4);
+}
+
+.hint {
+  margin-top: var(--space-2);
+  max-width: 80ch;
+  color: var(--muted);
+  font-size: var(--text-base);
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.field.inline {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/*
+ * The run picker wants room for a run id, expressed as `width` + `max-width` rather
+ * than `min-width` or a flex basis. Both of those were tried and both were wrong:
+ * a `min-width: 280px` on the select raises its min-content width, which widens the
+ * *document* (the header is `overflow: visible`) into a horizontal scrollbar at
+ * 320px; and a flex basis is measured along the main axis, so it became a 360px
+ * tall gap once the header stacks at 520px.
+ */
+.panel-header > .field.inline {
+  width: 360px;
+  max-width: 100%;
+}
+
+.field > span {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.field select,
+.field input {
+  min-height: 40px;
+  /* `width: 100%` plus `min-width: 0` is what lets a form control shrink at all:
+     a replaced element's default `min-width: auto` is its min-content width, which
+     for a `<select>` is its longest option. */
+  width: 100%;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+  /* Monospace, because every option is a run id and a proportional font makes two
+     timestamps that differ in one digit look identical. */
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+}
+
+.identity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--border);
+}
+
+/*
+ * The run id is the one value here with no natural wrap point short of 60
+ * characters, so it gets two columns. Without this it wraps to four lines and
+ * pushes the last definition onto a row of its own.
+ *
+ * Gated on a min-width, because `span 2` in a grid that has resolved to one
+ * column creates an implicit second column - and that is a horizontal scrollbar
+ * at 320px, which is the exact failure this rewrite set out to remove.
+ */
+@media (min-width: 640px) {
+  .identity-grid > .def:first-child {
+    grid-column: span 2;
+  }
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/*
+ * The row funnel. A flex row of chips that wraps, rather than a grid, because the
+ * number of stages is set by the manifest and a fixed column count would either
+ * clip a stage or leave a hole.
+ */
+.row-flow {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--border);
+}
+
+.chip {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.chip-label {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.chip strong {
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-split {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chip-arrow {
+  align-self: center;
+  padding: 0 var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-lg);
+}
+
+/* --- section headings --- */
+
+.section-heading {
+  margin-top: var(--space-6);
+}
+
+.section-note {
+  max-width: 90ch;
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-4);
+  color: var(--muted);
 }
 
 /* --- metric cards --- */
@@ -223,6 +484,90 @@ main {
   background: var(--surface-sunken);
 }
 
+/*
+ * The caption under each chart, holding the same sentence as the canvas's
+ * `aria-label`. Duplicated on purpose: a sighted reader gets the headline reading
+ * without decoding the plot, and the two can never disagree because `paint` sets
+ * both from one return value.
+ */
+.chart-caption {
+  margin-top: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-base);
+}
+
+/* --- data tables ---
+ *
+ * These are both the chart fallback and the primary rendering for anything that is
+ * a table by nature (PSI, run history). `<details>` collapsed by default so a
+ * 99-row cost table does not push the page down, and scrollable rather than
+ * page-widening.
+ */
+
+.data-fallback {
+  margin-top: var(--space-3);
+}
+
+.data-fallback summary {
+  padding: var(--space-1) 0;
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: var(--text-base);
+  font-weight: 700;
+}
+
+.data-fallback > .data-table {
+  display: block;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.data-table {
+  width: 100%;
+  margin-top: var(--space-3);
+  border-collapse: collapse;
+  font-size: var(--text-base);
+}
+
+.data-table caption {
+  margin-bottom: var(--space-2);
+  color: var(--muted);
+  text-align: left;
+}
+
+.data-table th,
+.data-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  /* Opaque, or the scrolled rows show through the sticky header. */
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+}
+
+.data-table tbody th {
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table .table-empty {
+  padding: var(--space-5);
+  color: var(--muted);
+  text-align: center;
+}
+
 .side-panel {
   grid-column: 2;
   grid-row: 1 / span 2;
@@ -239,18 +584,23 @@ main {
   border-bottom: var(--border);
 }
 
-dt {
+/* One key/value pair, from `definition()`. Used by both the identity strip and the
+   run-details panel, so they cannot drift apart. */
+.def dt {
   color: var(--muted);
   font-size: var(--text-sm);
   font-weight: 700;
   text-transform: uppercase;
 }
 
-dd {
+.def dd {
   margin-top: var(--space-1);
-  font-size: var(--text-xl);
+  font-size: var(--text-md);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  /* A run id and a dataset sha256 both have to wrap somewhere, and neither has a
+     space to wrap at. Without this the side panel widens the whole grid. */
+  overflow-wrap: anywhere;
 }
 
 .artifact-links {
@@ -274,43 +624,7 @@ dd {
   background: var(--surface-soft);
 }
 
-/* --- forms --- */
-
-.upload-panel {
-  display: grid;
-  gap: var(--space-4);
-  margin-top: var(--space-4);
-}
-
-.upload-form {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) 150px;
-  gap: var(--space-3);
-  align-items: end;
-}
-
-.upload-form label {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.upload-form label span {
-  color: var(--muted);
-  font-size: var(--text-sm);
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.upload-form input {
-  min-height: 40px;
-  width: 100%;
-  padding: 0 var(--space-2);
-  border: var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  color: var(--text);
-  font: inherit;
-}
+/* --- buttons --- */
 
 button {
   min-height: 40px;
@@ -333,9 +647,15 @@ button:disabled {
   opacity: 0.55;
 }
 
-.upload-message {
-  min-height: 18px;
+/* --- footer --- */
+
+.footer {
+  width: min(var(--content-width), 100%);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-7) var(--space-8);
+  border-top: var(--border);
   color: var(--muted);
+  font-size: var(--text-base);
 }
 
 /* --- responsive ---
@@ -359,14 +679,24 @@ button:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .panel-grid,
-  .upload-form {
+  .panel-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .side-panel {
     grid-column: auto;
     grid-row: auto;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+
+  /* The arrow separates the filter chips from the partition chips, which only
+     reads as a separator while they are on one line. Once the flow wraps it
+     lands at the end of an arbitrary row and points at nothing. */
+  .chip-arrow {
+    display: none;
   }
 }
 
@@ -393,5 +723,20 @@ button:disabled {
 
   .metric strong {
     font-size: var(--text-2xl);
+  }
+
+  .footer {
+    padding: var(--space-4) var(--space-3) var(--space-6);
+  }
+
+  /* The panel header stacks so the run picker gets the full width instead of a
+     150px stub that shows six characters of a run id. */
+  .panel-header {
+    flex-direction: column;
+  }
+
+  .field.inline {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
   }
 }

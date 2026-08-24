@@ -3,133 +3,188 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Credit Risk Dashboard</title>
+    <title>RiskScore - Model Dashboard</title>
+    <meta
+      name="description"
+      content="Credit default risk model: calibration, cost-sensitive threshold, drift, and per-applicant reason codes."
+    />
     <!-- Two sheets, in this order: tokens declares the custom properties app.css
          consumes. Both are plain <link>s rather than one @import, because an
          @import is discovered only after the first sheet has parsed and so
          serializes two round trips. -->
+    <!-- An inline SVG favicon, so there is no second file and no 404 in the
+         console. `currentColor` is not available to a favicon, hence the literal
+         accent green. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f7a5a'/%3E%3Cpath d='M7 23 L13 15 L19 19 L25 9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
     <link rel="stylesheet" href="/styles/tokens.css" />
     <link rel="stylesheet" href="/styles/app.css" />
+    <script>
+      // The one inline script on the page, and it has to be inline and blocking.
+      // `main.js` is a module and therefore deferred, so a stored dark preference
+      // applied from there would land after first paint - a white flash on every
+      // load. Reading one string and setting one attribute is cheap enough to do
+      // before the first byte of CSS is applied.
+      try {
+        const stored = localStorage.getItem("riskscore.theme");
+        if (stored === "dark" || stored === "light") {
+          document.documentElement.dataset.theme = stored;
+        }
+      } catch {
+        /* Storage can be blocked outright; the OS preference still applies. */
+      }
+    </script>
   </head>
   <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+
     <header class="topbar">
       <div>
-        <p class="eyebrow">Credit Default Risk</p>
-        <h1>Model Dashboard</h1>
+        <p class="eyebrow">Credit default risk</p>
+        <h1>RiskScore</h1>
+        <p class="tagline">
+          Lending Club vintages, an outcome-maturity embargo, a cost-sensitive threshold, and exact
+          reason codes.
+        </p>
       </div>
-      <div class="status" id="status">Loading reports</div>
+      <div class="topbar-actions">
+        <button type="button" id="themeToggle" class="ghost" aria-pressed="false">
+          <span id="themeToggleLabel">Dark theme</span>
+        </button>
+        <!-- role="status" is an implicit aria-live="polite" region: a load failure
+             is announced without stealing focus. The old dashboard reported every
+             failure into a plain <div>, which a screen reader never saw. -->
+        <p class="status" id="status" role="status" data-state="loading">Loading reports</p>
+      </div>
     </header>
 
-    <main>
-      <section class="metrics-grid" aria-label="Model metrics">
+    <main id="content">
+      <p class="banner" id="healthBanner" hidden></p>
+      <p class="banner" id="sanityBanner" hidden></p>
+
+      <section class="panel identity" aria-labelledby="identityHeading">
+        <div class="panel-header">
+          <div>
+            <h2 id="identityHeading">Active run</h2>
+            <p>Which model produced every number on this page.</p>
+          </div>
+          <label class="field inline">
+            <span>Run</span>
+            <select id="runSelect" aria-describedby="runSelectHint"></select>
+          </label>
+        </div>
+        <p class="hint" id="runSelectHint">
+          Selecting a past run re-reads its reports. It does not change which model
+          <code>POST /predict</code> serves - that is <code>riskscore activate</code>.
+        </p>
+        <dl class="identity-grid" id="identityGrid"></dl>
+        <div id="rowFlow" class="row-flow"></div>
+      </section>
+
+      <h2 class="section-heading" id="metricsHeading">Test-set performance</h2>
+      <p class="section-note">
+        Every number here comes from the test partition, scored once with the frozen model,
+        calibrator, and threshold. The threshold and the calibrator were fitted on validation.
+      </p>
+      <section class="metrics-grid" aria-labelledby="metricsHeading">
         <article class="metric">
           <span>AUC ROC</span>
           <strong id="aucRoc">-</strong>
-          <small>Ranking quality across thresholds</small>
+          <small>Ranking quality, across every threshold</small>
         </article>
         <article class="metric">
-          <span>Average Precision</span>
+          <span>Average precision</span>
           <strong id="averagePrecision">-</strong>
-          <small>Precision-recall summary</small>
+          <small>Precision-recall area, the imbalance-aware summary</small>
         </article>
         <article class="metric">
-          <span>KS Statistic</span>
+          <span>KS statistic</span>
           <strong id="ksStatistic">-</strong>
-          <small>Separation between paid and defaulted loans</small>
+          <small>Largest separation between repaid and defaulted</small>
         </article>
         <article class="metric">
-          <span>Selected Threshold</span>
-          <strong id="selectedThreshold">-</strong>
-          <small>Cost-aware cutoff for default probability</small>
-        </article>
-        <article class="metric">
-          <span>Brier Score</span>
+          <span>Brier score</span>
           <strong id="brierScore">-</strong>
-          <small>Lower is better for probability accuracy</small>
+          <small id="brierScoreNote">Squared error of the probability. Lower is better</small>
         </article>
         <article class="metric">
-          <span>Default Rate</span>
+          <span>Calibration error</span>
+          <strong id="ece">-</strong>
+          <small id="eceNote">Mean gap between predicted and observed, by decile</small>
+        </article>
+        <article class="metric">
+          <span>Default rate</span>
           <strong id="defaultRate">-</strong>
-          <small>Observed default share in the test window</small>
+          <small>Observed in the test window, after the embargo</small>
         </article>
         <article class="metric">
-          <span>Approval Rate</span>
+          <span>Approval rate</span>
           <strong id="approvalRate">-</strong>
-          <small>Share below the selected risk threshold</small>
+          <small>Share scoring below the threshold</small>
         </article>
         <article class="metric">
-          <span>Selected Cost</span>
-          <strong id="selectedCost">-</strong>
-          <small>Total weighted error cost at cutoff</small>
+          <span>Threshold</span>
+          <strong id="selectedThreshold">-</strong>
+          <small id="selectedThresholdNote">Cost-minimising cutoff, chosen on validation</small>
         </article>
       </section>
 
       <section class="panel-grid">
-        <article class="panel chart-panel">
+        <figure class="panel chart-panel" aria-labelledby="calibrationHeading">
           <div class="panel-header">
             <div>
-              <h2>Calibration</h2>
-              <p>Predicted probability compared with observed default rate.</p>
+              <h2 id="calibrationHeading">Calibration</h2>
+              <p>
+                Predicted probability against the rate actually observed, by decile. Validation is
+                in-sample for the calibrator; test is the claim.
+              </p>
             </div>
           </div>
-          <canvas id="calibrationChart" width="900" height="420"></canvas>
-        </article>
+          <!-- role="img" plus an aria-label that states the chart's reading, set
+               from the data in panels.js. The <details> below it carries the
+               numbers, which is the real alternative to a picture. -->
+          <canvas id="calibrationChart" role="img" aria-label="Calibration chart, loading"></canvas>
+          <figcaption id="calibrationCaption" class="chart-caption"></figcaption>
+          <div id="calibrationFallback"></div>
+        </figure>
 
-        <article class="panel chart-panel">
+        <figure class="panel chart-panel" aria-labelledby="thresholdHeading">
           <div class="panel-header">
             <div>
-              <h2>Threshold Cost</h2>
-              <p>Weighted error cost and approval rate across decision cutoffs.</p>
+              <h2 id="thresholdHeading">Threshold cost</h2>
+              <p>
+                Weighted error cost and approval rate at each candidate cutoff, on validation. A
+                missed default costs more than a declined good loan, so the cheapest cutoff is not
+                0.5.
+              </p>
             </div>
           </div>
-          <canvas id="thresholdChart" width="900" height="420"></canvas>
-        </article>
+          <canvas id="thresholdChart" role="img" aria-label="Threshold cost chart, loading"></canvas>
+          <figcaption id="thresholdCaption" class="chart-caption"></figcaption>
+          <div id="thresholdFallback"></div>
+        </figure>
 
-        <aside class="panel side-panel">
-          <h2>Run Details</h2>
-          <dl>
-            <div>
-              <dt>Model</dt>
-              <dd id="modelType">-</dd>
-            </div>
-            <div>
-              <dt>False Negative Cost</dt>
-              <dd id="falseNegativeCost">-</dd>
-            </div>
-            <div>
-              <dt>False Positive Cost</dt>
-              <dd id="falsePositiveCost">-</dd>
-            </div>
-          </dl>
-          <div class="artifact-links">
-            <a href="/artifacts/metrics/logistic_regression_metrics.json">Metrics JSON</a>
-            <a href="/artifacts/metrics/logistic_regression_calibration.csv">Calibration CSV</a>
-            <a href="/artifacts/metrics/logistic_regression_threshold_costs.csv">Threshold Costs CSV</a>
-            <a href="/artifacts/figures/logistic_regression_calibration.png">Calibration PNG</a>
-          </div>
+        <aside class="panel side-panel" aria-labelledby="detailsHeading">
+          <h2 id="detailsHeading">Run details</h2>
+          <dl id="runDetails"></dl>
+          <h3>Artifacts</h3>
+          <div class="artifact-links" id="artifactLinks"></div>
         </aside>
-      </section>
-
-      <section class="panel upload-panel">
-        <div>
-          <h2>Run A CSV</h2>
-          <p>
-            Upload a Lending Club-like CSV and refresh the dashboard with the new results.
-            The train / validation / test vintages come from <code>configs/run.yaml</code>,
-            so every run on this server is split the same way.
-          </p>
-        </div>
-        <form id="uploadForm" class="upload-form">
-          <label>
-            <span>CSV File</span>
-            <input id="csvFile" type="file" accept=".csv,text/csv" required />
-          </label>
-          <button type="submit" id="runButton">Run Baseline</button>
-        </form>
-        <p class="upload-message" id="uploadMessage"></p>
       </section>
     </main>
 
-    <script src="/app.js"></script>
+    <footer class="footer">
+      <p>
+        Served by the same process that answers <code>POST /predict</code>.
+        <a href="/docs">OpenAPI</a> · <a href="/readyz">Readiness</a>
+      </p>
+    </footer>
+
+    <!-- type="module" is natively deferred, so there is no blocking script and no
+         `defer` attribute to forget. It also gives real imports, which is what
+         lets the pure helpers be tested under `node --test`. -->
+    <script type="module" src="/js/main.js"></script>
   </body>
 </html>

@@ -47,7 +47,7 @@ Under the retrain endpoint that is a slow memory leak an HTTP request can trigge
 ## Inputs and outputs
 
 `compute_calibration_curve` takes labels and scores and returns a DataFrame with `bin`, `rows`, `mean_predicted_probability`, `observed_default_rate`, `lower_score`, `upper_score`.
-The middle two column names are load-bearing: `dashboard/app.js` reads them by name, so they are preserved and new columns are additive.
+The middle two column names are load-bearing: `dashboard/js/panels.js` reads `mean_predicted_probability` and `observed_default_rate` by name, so they are preserved and new columns are additive.
 
 `fit_calibrator` takes a fitted estimator and a `risk_score.modeling.ValidationPartition`, and returns a fitted `CalibratedClassifierCV`.
 That returned object is self-contained.
