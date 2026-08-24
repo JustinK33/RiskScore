@@ -43,6 +43,12 @@ _LOGGER = logging.getLogger(__name__)
 #: in the CSV and would otherwise be modelled as genuine extreme observations.
 MISSING_SENTINELS: frozenset[float] = frozenset({-1.0, 9999.0, 999999.0})
 
+#: The same values, ordered, for the comparison loop in :func:`coerce_numeric`.
+#: Sorted so the loop is deterministic; iterating the frozenset directly would
+#: depend on hash order, which is stable within a process but not across the
+#: docs and the code.
+_SENTINEL_VALUES: tuple[float, ...] = tuple(sorted(MISSING_SENTINELS))
+
 #: Utilization above this is treated as an outlier and winsorized rather than
 #: dropped. Real ``revol_util`` runs past 800% in the full extract - genuinely
 #: over-limit borrowers - but a single 8.9 in a scaled feature dominates the
@@ -91,8 +97,21 @@ def coerce_numeric(series: pd.Series) -> pd.Series:
         values = pd.to_numeric(cleaned, errors="coerce").astype("float64")
 
     # inf survives to_numeric ('inf' parses) and then breaks StandardScaler with
-    # an error about NaN, which sends you looking in the wrong place.
-    return values.replace([np.inf, -np.inf], np.nan).mask(values.isin(MISSING_SENTINELS))
+    # an error about NaN, which sends you looking in the wrong place. Sentinels go
+    # the same way.
+    #
+    # One numpy pass rather than `.replace(...).mask(series.isin(...))`, which is
+    # three passes and two intermediate Series. This function runs once per numeric
+    # column on every frame the project touches - 18 times per scoring request and
+    # 18 times over 1.8M rows during a fit - so the constant factor is worth the
+    # four extra lines. `isin` on a float array is a broadcast comparison against
+    # three values, not a hash table.
+    array = values.to_numpy(dtype="float64", copy=True)
+    unusable = ~np.isfinite(array)
+    for sentinel in _SENTINEL_VALUES:
+        unusable |= array == sentinel
+    array[unusable] = np.nan
+    return pd.Series(array, index=series.index, name=series.name, copy=False)
 
 
 def parse_percent(series: pd.Series, *, column_name: str = "percent") -> pd.Series:
@@ -104,7 +123,9 @@ def parse_percent(series: pd.Series, *, column_name: str = "percent") -> pd.Seri
     A sample-based check guards the declaration instead of replacing it.
     """
     fraction = coerce_numeric(series) / 100.0
-    observed = fraction.dropna()
+    # Length checked before `dropna`, not after: on a one-row scoring request the
+    # check cannot fire, so paying for the copy to discover that is pure latency.
+    observed = fraction.dropna() if len(fraction) >= MIN_ROWS_FOR_SANITY_CHECK else fraction
     if len(observed) >= MIN_ROWS_FOR_SANITY_CHECK and float(observed.max()) <= 0.02:
         # Everything under 2% after dividing means the source was already a
         # fraction, so this divided it twice. Loud, because the model would still
@@ -222,7 +243,11 @@ def build_credit_utilization(loans: pd.DataFrame) -> pd.Series:
     """
     if "revol_util" in loans.columns:
         utilization = coerce_numeric(loans["revol_util"])
-        observed = utilization.dropna()
+        # As in `parse_percent`: the guard needs a distribution, so a request-sized
+        # frame skips it before paying for the copy.
+        observed = (
+            utilization.dropna() if len(utilization) >= MIN_ROWS_FOR_SANITY_CHECK else utilization
+        )
         if (
             len(observed) >= MIN_ROWS_FOR_SANITY_CHECK
             and float(observed.max()) > MAX_UTILIZATION_UNITS_ERROR
@@ -361,6 +386,15 @@ def build_feature_matrix(
     built: dict[str, pd.Series] = {}
     consumed: set[str] = set()
     skipped: list[str] = []
+    # Which built features another builder reads. Only these are assigned back
+    # into the working frame, which for the shipped feature set means one extra
+    # frame (fico_band reads fico_midpoint) rather than one per feature. The old
+    # `loans.assign(**built)` inside the loop was quadratic in the feature count
+    # and ran on every scoring request as well as on 1.8M training rows.
+    consumed_by_builders = {name for feature in features for name in feature.requires} | {
+        name for feature in features for group in feature.requires_any for name in group
+    }
+    source = loans
 
     for feature in features:
         available = set(loans.columns) | set(built)
@@ -373,12 +407,14 @@ def build_feature_matrix(
                 )
             skipped.append(feature.name)
             continue
-        # Builders that read a previously built feature (fico_band reads
-        # fico_midpoint) need it visible, so the frame grows as we go. This is
-        # the one place the declared build order in ENGINEERED_FEATURES matters.
-        source = loans.assign(**built) if built else loans
-        built[feature.name] = FEATURE_BUILDERS[feature.name](source)
+        series = FEATURE_BUILDERS[feature.name](source)
+        built[feature.name] = series
         consumed.update(feature.consumes)
+        if feature.name in consumed_by_builders:
+            # Builders that read a previously built feature need it visible, so
+            # the frame grows here. This is the one place the declared build order
+            # in ENGINEERED_FEATURES matters.
+            source = source.assign(**{feature.name: series})
 
     if skipped:
         # Named, not silent: a run that quietly built four of six features looks

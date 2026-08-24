@@ -51,6 +51,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Self
 
+import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -304,6 +305,22 @@ class CanonicalizeFrame(_SpecTransformer):
         return list(self.spec.raw_inputs)
 
 
+def _with_missing_level(series: pd.Series) -> pd.Series:
+    """A categorical column with NA replaced by :data:`MISSING_CATEGORY`, as ``str``.
+
+    One numpy pass rather than ``.astype(object).where(notna(), ...).astype(str)``,
+    which is three pandas passes and three intermediate Series per categorical
+    column - on every scoring request and over 1.8M training rows.
+
+    ``to_numpy(dtype=object)`` also sidesteps the reason that old chain had to start
+    with ``astype(object)``: ``fico_band`` is a Categorical, and filling a
+    Categorical with a level it does not declare raises.
+    """
+    values = series.to_numpy(dtype=object)
+    filled = np.where(pd.isna(values), MISSING_CATEGORY, values).astype(str)
+    return pd.Series(filled, index=series.index, name=series.name, copy=False)
+
+
 class EngineerFeatures(_SpecTransformer):
     """The declared inputs -> exactly :attr:`FeatureSpec.model_features`.
 
@@ -330,15 +347,7 @@ class EngineerFeatures(_SpecTransformer):
         frame = frame.loc[:, list(self.spec.model_features)]
 
         # Missing becomes a level, not an imputed mode - see MISSING_CATEGORY.
-        # `.astype(object)` first because fico_band is a Categorical, and filling
-        # a Categorical with an unlisted value raises.
-        filled = {
-            name: frame[name]
-            .astype("object")
-            .where(frame[name].notna(), MISSING_CATEGORY)
-            .astype(str)
-            for name in self.spec.categorical_features
-        }
+        filled = {name: _with_missing_level(frame[name]) for name in self.spec.categorical_features}
         return frame.assign(**filled) if filled else frame
 
     def get_feature_names_out(self, input_features: Any = None) -> list[str]:
