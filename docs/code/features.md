@@ -35,7 +35,7 @@ That is how `earliest_cr_line`, a date string with 655 distinct values, was rout
 No I/O, no pandas, no configuration file reads.
 It is a pure data structure plus lookups over it, which is why it can be imported from anywhere including the serving path without pulling in scikit-learn.
 
-The only external input is the optional `extra_aliases` mapping, which comes from `configs/dataset_schema.yaml` and lets a new extract be onboarded without a code change.
+The only external input is the optional `extra_aliases` mapping, which comes from `configs/run.yaml` and lets a new extract be onboarded without a code change.
 
 ## Invariants and failure modes
 

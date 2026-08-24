@@ -269,8 +269,6 @@ async function readFileAsText(file) {
 async function runUploadedCsv(event) {
   event.preventDefault();
   const file = document.querySelector("#csvFile").files[0];
-  const trainEndDate = document.querySelector("#trainEndDate").value;
-  const testStartDate = document.querySelector("#testStartDate").value;
 
   if (!file) {
     uploadMessage.textContent = "Choose a CSV file first.";
@@ -286,12 +284,9 @@ async function runUploadedCsv(event) {
     const response = await fetch("/api/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filename: file.name,
-        csv_text: csvText,
-        train_end_date: trainEndDate,
-        test_start_date: testStartDate,
-      }),
+      // No split dates: the server splits by the vintages in its own config, so
+      // a client cannot ask for a split that overlaps train with test.
+      body: JSON.stringify({ filename: file.name, csv_text: csvText }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) {

@@ -561,7 +561,7 @@ def alias_lookup(
 ) -> dict[str, str]:
     """Return a lowercase source-name -> canonical-name map.
 
-    ``extra_aliases`` comes from ``configs/dataset_schema.yaml`` and lets a new
+    ``extra_aliases`` comes from ``configs/run.yaml`` and lets a new
     extract be onboarded without a code change. It is validated to the same
     standard as the built-in registry: too-short aliases and cross-canonical
     collisions are rejected rather than resolved by luck.

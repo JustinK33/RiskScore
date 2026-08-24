@@ -20,31 +20,38 @@ import pytest
 from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
 
+from risk_score.config import RunConfig, SplitConfig
 from risk_score.data_loading import create_default_target, load_lending_club_data
-from risk_score.evaluation import ClassificationMetrics, CostMatrix, select_threshold_by_cost
+from risk_score.evaluation import ClassificationMetrics, select_threshold_by_cost
 from risk_score.modeling import TimeSplit, split_by_time
 from risk_score.pipeline import run_baseline_pipeline
 
 # The synthetic extract covers 2013-01..2016-12, so three years of vintages
-# split three ways with positives in each.
+# split three ways with positives in each. These are the shipped defaults too;
+# restated here so the split these tests reproduce by hand is explicit.
 TRAIN = ("2013-01", "2014-12")
 VALIDATION = ("2015-01", "2015-12")
 TEST = ("2016-01", "2016-12")
 
-#: The pipeline's own default, restated so the threshold assertion below is
-#: comparing against a known cost matrix rather than whatever the default is.
-COSTS = CostMatrix(false_negative_cost=5.0, false_positive_cost=1.0)
+SPLIT = SplitConfig(train=TRAIN, validation=VALIDATION, test=TEST)
+
+#: The pipeline's own default, restated so the threshold assertion below compares
+#: against a stated cost matrix rather than whatever the default happens to be.
+COSTS = RunConfig().cost_matrix
 
 
-def run(raw_path: Path, output_dir: Path, **kwargs: Any) -> ClassificationMetrics:
+def run(
+    raw_path: Path,
+    output_dir: Path,
+    model_type: str = "logistic_regression",
+    **config_kwargs: Any,
+) -> ClassificationMetrics:
     """The pipeline on one fixed set of windows; only the extract varies."""
     return run_baseline_pipeline(
         raw_path,
         output_dir=output_dir,
-        train_window=TRAIN,
-        validation_window=VALIDATION,
-        test_window=TEST,
-        **kwargs,
+        model_type=model_type,
+        config=RunConfig(split=SPLIT, **config_kwargs),
     )
 
 

@@ -21,19 +21,17 @@ Two properties are worth stating because both were previously violated:
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 import joblib
 import pandas as pd
 from sklearn.pipeline import Pipeline
 
 from risk_score.calibration import compute_calibration_curve, plot_calibration_curve
+from risk_score.config import RunConfig
 from risk_score.data_loading import create_default_target, load_lending_club_data
 from risk_score.evaluation import (
     ClassificationMetrics,
-    CostMatrix,
     compute_auc_roc,
     compute_brier_score,
     compute_ks_statistic,
@@ -44,10 +42,6 @@ from risk_score.evaluation import (
 from risk_score.leakage_check import audit_columns
 from risk_score.modeling import split_by_time, train_logistic_regression, train_xgboost_model
 from risk_score.transformers import build_feature_spec
-
-#: Window bounds, as ``(start, end)``. Partial dates are allowed and the end is
-#: inclusive of the period it names - see :class:`risk_score.modeling.TimeWindow`.
-Window = Sequence[str | pd.Timestamp]
 
 TRAINERS = {
     "logistic_regression": train_logistic_regression,
@@ -64,20 +58,19 @@ def _predict_default_probability(model: Pipeline, features: pd.DataFrame) -> pd.
 def run_baseline_pipeline(
     raw_data_path: str | Path,
     *,
-    train_window: Window,
-    validation_window: Window,
-    test_window: Window,
-    date_column: str = "issue_d",
+    config: RunConfig | None = None,
     output_dir: str | Path = "reports",
     model_type: str = "logistic_regression",
-    model_config: dict[str, Any] | None = None,
-    schema_config: dict[str, Any] | None = None,
-    cost_matrix: CostMatrix | None = None,
-    include_lender_priced: bool = False,
 ) -> ClassificationMetrics:
     """Fit one model on one extract and write its metrics and figures.
 
-    ``include_lender_priced`` admits ``int_rate``/``grade``/``sub_grade``/
+    Everything the run varies - split windows, cost matrix, hyperparameters,
+    feature tier, extra column aliases - arrives in one validated
+    :class:`~risk_score.config.RunConfig`, so there is no second place a window
+    or a cost can be specified and disagree. Omitting it uses the shipped
+    defaults, which is a complete configuration.
+
+    ``config.include_lender_priced`` admits ``int_rate``/``grade``/``sub_grade``/
     ``installment``. Off by default: they are the lender's own price, so a model
     using them cannot score an applicant nobody has priced yet. See
     ``docs/decisions/0005-lender-priced-feature-tier.md``.
@@ -85,19 +78,20 @@ def run_baseline_pipeline(
     if model_type not in TRAINERS:
         raise ValueError(f"Supported model types are {sorted(TRAINERS)}; got {model_type!r}.")
 
+    config = config or RunConfig()
     output_path = Path(output_dir)
     metrics_path = output_path / "metrics"
     figures_path = output_path / "figures"
     models_path = output_path / "models"
     for directory in (metrics_path, figures_path, models_path):
         directory.mkdir(parents=True, exist_ok=True)
-    if cost_matrix is None:
-        cost_matrix = CostMatrix(false_negative_cost=5.0, false_positive_cost=1.0)
 
-    schema_config = schema_config or {}
+    cost_matrix = config.cost_matrix
+    include_lender_priced = config.include_lender_priced
+    date_column = config.split.date_column
     loans = load_lending_club_data(
         raw_data_path,
-        column_aliases=schema_config.get("column_aliases"),
+        column_aliases=config.column_aliases or None,
     )
     loans = loans.assign(default_flag=create_default_target(loans))
     loans = loans.dropna(subset=["default_flag"])
@@ -119,12 +113,14 @@ def run_baseline_pipeline(
         loans.drop(columns=["default_flag"]),
         target,
         date_column=date_column,
-        train=train_window,
-        validation=validation_window,
-        test=test_window,
+        train=config.split.train,
+        validation=config.split.validation,
+        test=config.split.test,
     )
 
-    model = TRAINERS[model_type](split.x_train, split.y_train, spec=spec, config=model_config)
+    model = TRAINERS[model_type](
+        split.x_train, split.y_train, spec=spec, config=config.model_params(model_type)
+    )
     joblib.dump(model, models_path / f"{model_type}.joblib")
 
     # --- 1. the decision rule, chosen on validation only ------------------------

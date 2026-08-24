@@ -57,9 +57,9 @@ The canonical schema uses names such as `loan_status`, `issue_d`, `loan_amnt`, `
 
 The compatibility layer accepts alternate names such as `status`, `issue_month`, `loan_amount`, `annual_income`, `debt_to_income`, and `revolUtil`.
 
-Configurable aliases live in `configs/dataset_schema.yaml`.
+Configurable aliases live in `configs/run.yaml`.
 
-When a new CSV uses different column names, the intended workflow is to add those names to `configs/dataset_schema.yaml`.
+When a new CSV uses different column names, the intended workflow is to add those names to `configs/run.yaml`.
 
 The pipeline code should not need to change for ordinary schema-name variations.
 
@@ -161,7 +161,7 @@ The pipeline also includes an XGBoost training path.
 
 XGBoost is selected with `--model-type xgboost`.
 
-The model type and parameters are configured through `configs/model_config.yaml`.
+The model type and parameters are configured through `configs/run.yaml`.
 
 ## Time-Based Validation
 
@@ -255,7 +255,7 @@ python scripts/run_baseline.py \
   --raw-data-path data/raw/my_loans.csv \
   --train-end-date 2016-12-31 \
   --test-start-date 2017-01-01 \
-  --schema-config configs/dataset_schema.yaml
+  --schema-config configs/run.yaml
 ```
 
 Start the dashboard.
@@ -338,7 +338,7 @@ The pipeline is generalized for Lending Club-like credit risk datasets, not arbi
 
 A CSV still needs a loan outcome column, issue date column, loan amount, annual income, DTI, and revolving utilization or a compatible alias.
 
-Very different datasets will need aliases added to `configs/dataset_schema.yaml`.
+Very different datasets will need aliases added to `configs/run.yaml`.
 
 The dashboard upload currently runs the logistic regression baseline only.
 

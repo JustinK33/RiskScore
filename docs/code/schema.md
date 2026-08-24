@@ -21,7 +21,7 @@ Two audit bugs lived here.
 
 ## Inputs and outputs
 
-In: a DataFrame with whatever the extract called its columns, and optionally an alias mapping from `configs/dataset_schema.yaml`.
+In: a DataFrame with whatever the extract called its columns, and optionally an alias mapping from `configs/run.yaml`.
 
 Out: a DataFrame with canonical names and real `datetime64` date columns, plus a `SchemaReport`.
 

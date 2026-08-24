@@ -1,0 +1,43 @@
+# The run configuration. One file, and every key here is validated on load -
+# an unrecognized key raises instead of being silently ignored.
+#
+# What is deliberately NOT here: which columns exist, what they are called in
+# each extract, how they parse, and whether they may be used as features. That
+# is settled in src/risk_score/features.py. Two earlier config files held copies
+# of it, the copies disagreed with the registry, and the model was fit on the
+# disagreement.
+
+split:
+  date_column: issue_d
+  # Inclusive of the month each bound names, so "2014-12" runs through 31
+  # December. Train fits the model; validation picks the threshold and nothing
+  # else does; test is scored once and only reported.
+  train: ["2013-01", "2014-12"]
+  validation: ["2015-01", "2015-12"]
+  test: ["2016-01", "2016-12"]
+
+threshold:
+  # A missed default costs five times what a declined good applicant does. This
+  # ratio is the one genuinely business-owned number in the project, and every
+  # reported cost figure is relative to it.
+  false_negative_cost: 5.0
+  false_positive_cost: 1.0
+
+leakage:
+  # int_rate, grade, sub_grade, installment: the lender's own price, already
+  # fitted to default. Off by default because an applicant nobody has priced yet
+  # does not have them. See docs/decisions/0005-lender-priced-feature-tier.md.
+  include_lender_priced: false
+
+models:
+  # Overrides only. Anything omitted uses the tested defaults in
+  # src/risk_score/modeling.py, and unknown parameters are rejected by sklearn
+  # and XGBoost themselves.
+  logistic_regression: {}
+  xgboost: {}
+
+# Extra source-column names for an extract the registry does not recognize, as
+# canonical -> [aliases]. The registry wins any conflict, aliases shorter than
+# three characters are rejected (a one-letter alias once hijacked the target),
+# and an alias already claimed by another column is an error.
+column_aliases: {}

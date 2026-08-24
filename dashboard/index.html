@@ -108,20 +108,16 @@
       <section class="panel upload-panel">
         <div>
           <h2>Run A CSV</h2>
-          <p>Upload a Lending Club-like CSV, choose a time split, and refresh the dashboard with the new results.</p>
+          <p>
+            Upload a Lending Club-like CSV and refresh the dashboard with the new results.
+            The train / validation / test vintages come from <code>configs/run.yaml</code>,
+            so every run on this server is split the same way.
+          </p>
         </div>
         <form id="uploadForm" class="upload-form">
           <label>
             <span>CSV File</span>
             <input id="csvFile" type="file" accept=".csv,text/csv" required />
-          </label>
-          <label>
-            <span>Train End Date</span>
-            <input id="trainEndDate" type="date" value="2016-12-31" required />
-          </label>
-          <label>
-            <span>Test Start Date</span>
-            <input id="testStartDate" type="date" value="2017-01-01" required />
           </label>
           <button type="submit" id="runButton">Run Baseline</button>
         </form>

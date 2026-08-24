@@ -10,8 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
-from risk_score.config import load_yaml_config
-from risk_score.evaluation import CostMatrix
+from risk_score.config import load_run_config
 from risk_score.pipeline import run_baseline_pipeline
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -91,24 +90,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             payload = self._read_json_body()
             csv_text = str(payload["csv_text"])
             filename = str(payload.get("filename") or "uploaded_loans.csv")
-            train_end_date = str(payload["train_end_date"])
-            test_start_date = str(payload["test_start_date"])
             raw_path = self._write_upload(filename, csv_text)
-            config = load_yaml_config(PROJECT_ROOT / "configs" / "model_config.yaml")
-            schema_config = load_yaml_config(PROJECT_ROOT / "configs" / "dataset_schema.yaml")
-            selected_model_config = config.get("logistic_regression", {})
+            # The split windows come from the server's own config, not from the
+            # request: a client that could name them could overlap train with
+            # test and get a flattering result out of this endpoint.
             metrics = run_baseline_pipeline(
                 raw_path,
-                train_end_date=train_end_date,
-                test_start_date=test_start_date,
+                config=load_run_config(PROJECT_ROOT / "configs" / "run.yaml"),
                 output_dir=REPORTS_ROOT,
                 model_type="logistic_regression",
-                model_config=selected_model_config,
-                schema_config=schema_config,
-                cost_matrix=CostMatrix(
-                    false_negative_cost=5.0,
-                    false_positive_cost=1.0,
-                ),
             )
         except Exception as exc:
             self._send_json({"ok": False, "error": str(exc)}, status=400)

@@ -41,7 +41,7 @@ The header read is what makes a dtype map possible: the map has to be keyed by t
 Text-ish columns are declared as `string` so the C parser never guesses and a percent column cannot be read as float in one chunk and object in the next.
 Genuinely numeric columns are deliberately left to inference: declaring `float64` would make the entire read *fail* on a single `n/a` cell, whereas `to_numeric` downstream handles that per value.
 
-A file where nothing matched raises, listing the first ten columns found and pointing at `configs/dataset_schema.yaml`.
+A file where nothing matched raises, listing the first ten columns found and pointing at `configs/run.yaml`.
 `project=False` reads everything, which is only useful for auditing an unfamiliar extract.
 
 ### Audit P02: the label is a Series

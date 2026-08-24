@@ -149,7 +149,7 @@ def read_raw_loans(
                 raise ValueError(
                     f"None of the {len(header)} columns in {data_path} matched a known "
                     f"column. Found: {list(header)[:10]}. Add aliases under "
-                    f"`column_aliases` in configs/dataset_schema.yaml."
+                    f"`column_aliases` in configs/run.yaml."
                 )
             loans = pd.read_csv(data_path, usecols=usecols, dtype=dtypes)
         else:
