@@ -21,6 +21,8 @@ from sklearn.metrics import brier_score_loss
 
 from risk_score.calibration import (
     MIN_POSITIVES_FOR_ISOTONIC,
+    _axis_extent,
+    _marker_sizes,
     build_calibration_report,
     choose_calibration_method,
     compute_calibration_curve,
@@ -274,6 +276,52 @@ def test_an_explicit_method_overrides_the_automatic_choice() -> None:
 
 
 # --- the plot ------------------------------------------------------------------
+
+
+def test_the_axes_are_scaled_to_the_book_and_stay_square() -> None:
+    """A (0, 1) window puts a whole credit portfolio in one corner of the figure.
+
+    One number is returned for both axes on purpose: the window has to stay
+    square or the reference line is no longer at 45 degrees, and the whole chart
+    is read as distance from that line.
+    """
+    tenth = np.array([0.02, 0.09], dtype=np.float64)
+    # 0.09 * 1.15 = 0.1035, up to the next tenth.
+    assert _axis_extent(tenth, tenth) == pytest.approx(0.2)  # the floor, not 0.2 by rounding
+    assert _axis_extent(np.array([0.26]), np.array([0.27])) == pytest.approx(0.4)
+    # The observed rate can exceed the predicted one; the window covers both.
+    assert _axis_extent(np.array([0.1]), np.array([0.62])) == pytest.approx(0.8)
+    # And a model that really does predict near 1.0 gets the full square back.
+    assert _axis_extent(np.array([0.05, 0.97]), np.array([0.0, 1.0])) == pytest.approx(1.0)
+
+
+def test_a_curve_with_no_rows_does_not_crash_the_axis_scaling() -> None:
+    """`plot_calibration_curve` is public and the reduction over an empty array
+    would otherwise raise before any message about the empty curve."""
+    empty = np.array([], dtype=np.float64)
+
+    assert _axis_extent(empty, empty) == pytest.approx(0.2)
+
+
+def test_marker_area_encodes_the_count_only_when_the_bins_are_uneven() -> None:
+    """Quantile bins differ by a single row, so scaling on that would make every
+    marker large and every marker a lie.
+
+    The note is asserted alongside the sizes because it is the part a reader
+    sees: it may promise "area proportional to count" only when area carries
+    information.
+    """
+    areas, note = _marker_sizes(np.array([157.0, 156.0]))
+    assert len(set(areas)) == 1
+    assert note == "156-157 loans per bin"
+
+    # A tie-heavy tree score collapses bins, and then the counts are the point.
+    areas, note = _marker_sizes(np.array([400.0, 12.0]))
+    assert areas[0] > areas[1]
+    assert note == "12-400 loans per bin, marker area proportional to count"
+
+    _, note = _marker_sizes(np.array([35.0, 35.0]))
+    assert note == "35 loans per bin"
 
 
 def test_the_plot_writes_a_file_and_leaves_no_open_figure(tmp_path: Path) -> None:

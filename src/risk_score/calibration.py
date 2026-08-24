@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.frozen import FrozenEstimator
@@ -231,6 +232,46 @@ def fit_calibrator(
     return calibrator
 
 
+def _axis_extent(predicted: npt.NDArray[np.float64], observed: npt.NDArray[np.float64]) -> float:
+    """The upper bound for *both* axes of the reliability diagram.
+
+    One number for both, because the window has to stay square: that is what
+    keeps the perfect-calibration reference line at a true 45 degrees, and the
+    eye reads distance from that line as the size of the miscalibration.
+
+    It is not simply 1.0 because a credit book at a 15% base rate puts its entire
+    curve in the bottom-left corner, so a (0, 1) window spends most of the figure
+    on probabilities no loan in the portfolio has and shrinks the informative
+    part to a smudge.
+    """
+    # The appended 0.0 makes the reduction total-safe on a curve with no rows.
+    largest = float(np.max(np.concatenate([predicted, observed, [0.0]])))
+    # 15% headroom, rounded up to a tenth so the tick labels stay legible, and
+    # floored at 0.2 - an axis ending at 0.05 reads as a zoom artifact rather
+    # than as a well-calibrated low-risk book.
+    return min(1.0, max(0.2, float(np.ceil(largest * 11.5) / 10.0)))
+
+
+def _marker_sizes(rows: npt.NDArray[np.float64]) -> tuple[npt.NDArray[np.float64], str]:
+    """Point areas for the reliability diagram, and the note that explains them.
+
+    Bin size is encoded as marker area rather than as a text label per point. The
+    labels were tried and were unreadable: quantile bins are equal-sized, so all
+    ten read ``n=35``, and the ones in the crowded bottom-left corner - where a
+    credit model puts most of its mass - overlapped each other.
+
+    Area is only *used* when the bins are genuinely uneven, which happens when a
+    tie-heavy tree score collapses several of them together. Otherwise the counts
+    differ by a single row, and scaling on that would make every marker large
+    while claiming to mean something.
+    """
+    low, high = int(rows.min()), int(rows.max())
+    note = f"{low} loans per bin" if low == high else f"{low}-{high} loans per bin"
+    if low * 2 <= high:
+        return 30.0 + 170.0 * rows / rows.max(), f"{note}, marker area proportional to count"
+    return np.full(rows.size, 45.0), note
+
+
 def plot_calibration_curve(
     calibration_data: pd.DataFrame,
     *,
@@ -265,33 +306,21 @@ def plot_calibration_curve(
         else np.full(predicted.size, np.nan)
     )
 
+    extent = _axis_extent(predicted, observed)
+
     figure, axes = plt.subplots(figsize=(6, 6))
     try:
         axes.plot(
-            [0, 1],
-            [0, 1],
+            [0, extent],
+            [0, extent],
             linestyle="--",
             linewidth=1,
             color="#999999",
             label="Perfect calibration",
         )
         axes.plot(predicted, observed, color="#1f77b4", linewidth=1.5, zorder=2, label="Model")
-        if np.isfinite(rows).all():
-            # Bin size is encoded as marker area rather than as a text label per
-            # point. The labels were unreadable in practice: quantile bins are
-            # equal-sized, so all ten read "n=35" and the ones in the crowded
-            # bottom-left corner - where a credit model puts most of its mass -
-            # overlapped each other. Area still distinguishes the collapsed bins
-            # that a tie-heavy score produces, which is the case the count is for.
-            low, high = int(rows.min()), int(rows.max())
-            if low == high:
-                # Equal-sized bins are the normal case, and scaling identical
-                # counts would only make every marker large for no information.
-                areas = np.full(predicted.size, 45.0)
-                size_note = f"{low} loans per bin"
-            else:
-                areas = 30.0 + 170.0 * rows / rows.max()
-                size_note = f"{low}-{high} loans per bin, marker area proportional to count"
+        if rows.size and np.isfinite(rows).all():
+            areas, size_note = _marker_sizes(rows)
             axes.scatter(predicted, observed, s=areas, color="#1f77b4", zorder=3)
             axes.set_title(f"Calibration\n{len(predicted)} quantile bins, {size_note}", fontsize=10)
         else:
@@ -300,11 +329,11 @@ def plot_calibration_curve(
 
         axes.set_xlabel("Mean predicted default probability")
         axes.set_ylabel("Observed default rate")
-        # Fixed limits and an equal aspect, so the reference line is drawn at a
+        # Equal aspect on a square window, so the reference line is drawn at a
         # true 45 degrees. On autoscaled axes it is not, and the eye reads
         # distance from that line as the size of the miscalibration.
-        axes.set_xlim(0.0, 1.0)
-        axes.set_ylim(0.0, 1.0)
+        axes.set_xlim(0.0, extent)
+        axes.set_ylim(0.0, extent)
         axes.set_aspect("equal")
         axes.grid(True, linewidth=0.4, color="#dddddd")
         axes.set_axisbelow(True)
