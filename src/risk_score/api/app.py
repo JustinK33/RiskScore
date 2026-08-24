@@ -41,6 +41,8 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from risk_score.api.reports import clear_cache as clear_report_cache
+from risk_score.api.routes_admin import build_runner
+from risk_score.api.routes_admin import router as admin_router
 from risk_score.api.routes_public import router as public_router
 from risk_score.api.schemas import ErrorOut, build_applicant_model
 from risk_score.api.scoring import ScoringService
@@ -67,6 +69,11 @@ SCOPE_REQUEST_ID = "riskscore_request_id"
 #: the import version-dependent for no gain; the numbers have never moved.
 HTTP_413 = 413
 HTTP_422 = 422
+
+#: The one route whose body is a file rather than a JSON document, so the one that
+#: gets its own size cap. Spelled here rather than imported from the router,
+#: because the middleware sees a path and not a route object.
+UPLOAD_PATH = "/api/datasets"
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -101,17 +108,28 @@ class RequestContextMiddleware:
     application is called at all, so an oversized upload costs one response and
     no allocation. A chunked body with no declared length is counted as it
     arrives.
+
+    ``limits`` maps a path to its own cap, because one number cannot serve both
+    routes that take a body: a ``/predict`` body is a few hundred bytes and 1 MiB
+    is already generous, while a dataset upload is tens of megabytes by design. A
+    per-path map rather than exempting the upload route entirely - an uncapped
+    route is a full disk - and keyed on exact paths, since a prefix match is how an
+    exemption ends up applying to something that was not meant to have it.
     """
 
-    def __init__(self, app: Any, *, max_body_bytes: int) -> None:
+    def __init__(
+        self, app: Any, *, max_body_bytes: int, limits: dict[str, int] | None = None
+    ) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
+        self.limits = limits or {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
+        limit = self.limits.get(scope.get("path", ""), self.max_body_bytes)
         with bind_request_id(_header(scope, b"x-request-id")) as request_id:
             scope[SCOPE_REQUEST_ID] = request_id
             declared = _content_length(scope)
@@ -124,18 +142,18 @@ class RequestContextMiddleware:
                     request_id,
                 )
                 return
-            if isinstance(declared, int) and declared > self.max_body_bytes:
+            if isinstance(declared, int) and declared > limit:
                 await _send_error(
                     scope,
                     send,
                     HTTP_413,
-                    f"Request body exceeds {self.max_body_bytes} bytes.",
+                    f"Request body exceeds {limit} bytes.",
                     request_id,
                 )
                 return
             await self.app(
                 scope,
-                _counting_receive(receive, self.max_body_bytes),
+                _counting_receive(receive, limit),
                 _stamping_send(send, request_id),
             )
 
@@ -315,16 +333,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f"RISKSCORE_REQUIRE_BUNDLE is set and no bundle loaded: {app.state.load_error}"
         )
 
+    # Built whether or not retraining is enabled, and it costs nothing until a job
+    # is submitted: a runner with no job is a lock and two empty containers. The
+    # alternative - build it on first use - would mean two concurrent first
+    # requests could each build one, and the single retrain slot would be two.
+    app.state.job_runner = build_runner(settings, on_success=lambda _run_id: load_service(app))
+
     # Added last-to-first: `add_middleware` prepends, so the final call is the
     # outermost layer. RequestContext must be outermost - everything inside it,
     # including TrustedHost's refusal, should carry a request id.
     app.add_middleware(GZipMiddleware, minimum_size=GZIP_MINIMUM_BYTES)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
-    app.add_middleware(RequestContextMiddleware, max_body_bytes=settings.max_body_bytes)
+    app.add_middleware(
+        RequestContextMiddleware,
+        max_body_bytes=settings.max_body_bytes,
+        limits={UPLOAD_PATH: settings.max_upload_bytes},
+    )
 
     _install_handlers(app)
     _install_openapi(app)
     app.include_router(public_router)
+    app.include_router(admin_router)
 
     _log.info(
         "serving on %s:%d (docs %s, mutating routes: %s)",

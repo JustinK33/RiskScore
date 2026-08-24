@@ -359,12 +359,15 @@ def test_a_non_csv_upload_is_refused_after_streaming_and_leaves_nothing(tmp_path
 def test_a_stream_that_breaks_midway_leaves_nothing(tmp_path: Path) -> None:
     """A dropped connection must not leave a file under a hash of partial bytes."""
 
-    class Breaking(io.RawIOBase):
+    # A plain class, not an `io` subclass: `store_dataset` declares the `Reader`
+    # protocol, which is one `read` method, precisely so the real caller - an ASGI
+    # body adapter - does not have to pretend to be a file.
+    class Breaking:
         def read(self, size: int = -1) -> bytes:
             raise OSError("connection reset")
 
     with pytest.raises(OSError, match="connection reset"):
-        store_dataset(Breaking(), tmp_path, max_bytes=1 << 20)  # type: ignore[arg-type]
+        store_dataset(Breaking(), tmp_path, max_bytes=1 << 20)
     assert list(tmp_path.iterdir()) == []
 
 
@@ -375,7 +378,7 @@ def test_a_size_cap_is_enforced_across_chunks(tmp_path: Path) -> None:
     cap checked only against ``Content-Length`` would accept all of it.
     """
 
-    class Dribbling(io.RawIOBase):
+    class Dribbling:
         def __init__(self) -> None:
             self.sent = 0
 
@@ -384,7 +387,7 @@ def test_a_size_cap_is_enforced_across_chunks(tmp_path: Path) -> None:
             return b"a,b,c,d\n"
 
     with pytest.raises(UploadRejected, match="exceeds"):
-        store_dataset(Dribbling(), tmp_path, max_bytes=100)  # type: ignore[arg-type]
+        store_dataset(Dribbling(), tmp_path, max_bytes=100)
     assert list(tmp_path.iterdir()) == []
 
 

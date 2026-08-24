@@ -325,7 +325,12 @@ class RetrainIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dataset_id: str = Field(description="From POST /api/datasets.")
-    model_type: str = Field(default="logistic_regression")
+    #: A ``Literal`` rather than a validated ``str`` so ``/docs`` renders a choice
+    #: instead of a free text box. Spelled out rather than built from
+    #: ``SUPPORTED_MODEL_TYPES``, because a Literal cannot be constructed from a
+    #: runtime tuple - ``test_retrain_offers_every_supported_model`` is what keeps
+    #: the two in step.
+    model_type: Literal["logistic_regression", "xgboost"] = "logistic_regression"
     include_lender_priced: bool = Field(
         default=False,
         description=(

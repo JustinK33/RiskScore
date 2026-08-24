@@ -49,7 +49,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import IO, Any, Final, Literal
+from typing import Any, Final, Literal, Protocol
 
 from risk_score.artifacts import now_iso
 
@@ -405,6 +405,18 @@ class UploadRejected(ValueError):
     """An upload that will not be stored, with a reason fit to return."""
 
 
+class Reader(Protocol):
+    """The only thing :func:`store_dataset` needs from what it is storing.
+
+    A protocol rather than ``IO[bytes]`` because the real caller is not a file: it
+    is an ASGI request body adapted to a blocking ``read``, and declaring
+    ``IO[bytes]`` would demand ``seek``, ``tell``, ``fileno`` and a context manager
+    that the adapter has no way to provide and this function never calls.
+    """
+
+    def read(self, size: int = ..., /) -> bytes: ...
+
+
 @dataclass(frozen=True, slots=True)
 class DatasetRef:
     """One stored dataset, named by content rather than by filename.
@@ -419,6 +431,11 @@ class DatasetRef:
     dataset_id: str
     path: Path
     size_bytes: int
+    #: Whether these exact bytes were already stored. Decided inside
+    #: :func:`store_dataset`, immediately before the rename, because afterwards the
+    #: two cases are indistinguishable - the destination name is the content, so a
+    #: re-upload renames onto a file identical to itself.
+    existing: bool = False
 
 
 def looks_like_csv(head: bytes) -> None:
@@ -449,7 +466,7 @@ def looks_like_csv(head: bytes) -> None:
         raise UploadRejected("The first line has no comma, so it is not a CSV header.")
 
 
-def _drain(stream: IO[bytes], temporary: Path, max_bytes: int) -> tuple[str, int, bytes]:
+def _drain(stream: Reader, temporary: Path, max_bytes: int) -> tuple[str, int, bytes]:
     """Copy the stream to ``temporary``, returning its digest, size, and first chunk.
 
     Separate from :func:`store_dataset` so the caller's cleanup handler wraps a
@@ -477,7 +494,7 @@ def _drain(stream: IO[bytes], temporary: Path, max_bytes: int) -> tuple[str, int
     return digest.hexdigest()[:32], size, head
 
 
-def store_dataset(stream: IO[bytes], directory: Path, *, max_bytes: int) -> DatasetRef:
+def store_dataset(stream: Reader, directory: Path, *, max_bytes: int) -> DatasetRef:
     """Stream an upload to a content-addressed file, or refuse it.
 
     Written to a temporary name in the destination directory and renamed once
@@ -496,11 +513,12 @@ def store_dataset(stream: IO[bytes], directory: Path, *, max_bytes: int) -> Data
         dataset_id, size, head = _drain(stream, temporary, max_bytes)
         looks_like_csv(head)
         destination = directory / f"{dataset_id}.csv"
+        existing = destination.is_file()
         temporary.replace(destination)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
-    return DatasetRef(dataset_id=dataset_id, path=destination, size_bytes=size)
+    return DatasetRef(dataset_id=dataset_id, path=destination, size_bytes=size, existing=existing)
 
 
 def resolve_dataset(dataset_id: str, directory: Path) -> Path:
