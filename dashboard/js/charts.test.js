@@ -271,6 +271,36 @@ test("legend items are laid out by measurement, left to right", () => {
   assert.ok(positions[1] > positions[0], "the second item must start after the first");
 });
 
+test("a legend too wide for the plot wraps instead of spilling past the axis", () => {
+  const ctx = fakeContext();
+  // A 300px canvas leaves a ~243px plot, which is about what a 390px phone has
+  // once the y axis is paid for - and where "Closed loans only / Embargo applied"
+  // stopped fitting on one row.
+  const frame = drawFrame(ctx, { width: 300, height: 300, x: AXIS, y: AXIS, colors: COLORS });
+  drawLegend(
+    ctx,
+    frame,
+    [
+      { label: "Closed loans only", color: "#000" },
+      { label: "Embargo applied", color: "#111" },
+    ],
+    { colors: COLORS },
+  );
+
+  const at = (prefix) =>
+    ctx.calls.find((call) => call.name === "fillText" && call.args[0].startsWith(prefix));
+  const first = at("Closed");
+  const second = at("Embargo");
+
+  // Second row: the same x as the first entry, one box height lower.
+  assert.equal(second.args[1], first.args[1]);
+  assert.ok(second.args[2] > first.args[2], "the wrapped entry must sit below the first");
+  // And neither may start right of the plot, which is the defect itself.
+  for (const call of [first, second]) {
+    assert.ok(call.args[1] < frame.plot.right, `${call.args[0]} starts past the plot`);
+  }
+});
+
 // --- 6. the bitmap ---
 
 /** A canvas-alike whose CSS box is fixed and whose bitmap is observable. */

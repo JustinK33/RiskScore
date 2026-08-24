@@ -449,50 +449,81 @@ export function drawCategoryLabels(ctx, frame, categories, { colors, slot }) {
 }
 
 /**
- * A legend inside the plot, top-left, laid out by measurement.
+ * A legend inside the plot, top-aligned, laid out by measurement and wrapped.
  *
  * Inside rather than below, because a legend below competes with the x axis title
  * for the same strip and the plot loses height to furniture. A translucent
  * backing plate keeps it readable over a line that passes underneath.
+ *
+ * Wrapped, because "Closed loans only / Embargo applied" measures wider than the
+ * plot at 390px. A single row there put the second swatch past the right axis and
+ * the backing plate over the tick labels - which no unit test sees, because the
+ * text is all still drawn and nothing overflows the *page*. One row per line that
+ * fits keeps every entry inside the plot at any width a chart is drawn at.
  */
 export function drawLegend(ctx, frame, entries, { colors, align = "left" } = {}) {
   if (entries.length === 0) return;
   ctx.font = colors.font;
   const swatch = 9;
   const itemGap = 14;
-  const widths = entries.map((entry) => swatch + GAP + ctx.measureText(entry.label).width);
-  const total = widths.reduce((sum, width) => sum + width, 0) + itemGap * (entries.length - 1);
   const boxHeight = 18;
-  let cursor =
-    align === "right" ? frame.plot.right - total - GAP : frame.plot.left + GAP + GAP;
-  const top = frame.plot.top + 4;
+  const widths = entries.map((entry) => swatch + GAP + ctx.measureText(entry.label).width);
+  // The plate is inset by GAP either side, so that much of the plot is unavailable
+  // to the entries themselves.
+  const available = frame.plot.right - frame.plot.left - GAP * 4;
 
-  ctx.save();
-  ctx.globalAlpha = 0.85;
-  ctx.fillStyle = colors.grid;
-  ctx.fillRect(cursor - GAP, top, total + GAP * 2, boxHeight);
-  ctx.restore();
+  // Greedy wrap: an entry starts a new row when adding it would pass the plot edge.
+  // A single entry wider than the whole plot still gets its own row rather than
+  // being dropped, because a legend missing a series is worse than one that
+  // touches the axis.
+  const rows = [];
+  let current = { indexes: [], width: 0 };
+  entries.forEach((_entry, index) => {
+    const extra = widths[index] + (current.indexes.length ? itemGap : 0);
+    if (current.indexes.length && current.width + extra > available) {
+      rows.push(current);
+      current = { indexes: [], width: 0 };
+    }
+    current.indexes.push(index);
+    current.width += current.indexes.length === 1 ? widths[index] : extra;
+  });
+  rows.push(current);
 
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  const middle = top + boxHeight / 2;
-  entries.forEach((entry, index) => {
-    ctx.fillStyle = entry.color;
-    if (entry.dash) {
-      ctx.strokeStyle = entry.color;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath();
-      ctx.moveTo(cursor, middle);
-      ctx.lineTo(cursor + swatch, middle);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    } else {
-      ctx.fillRect(cursor, middle - swatch / 2, swatch, swatch);
+  rows.forEach((row, rowIndex) => {
+    const top = frame.plot.top + 4 + rowIndex * boxHeight;
+    const start =
+      align === "right"
+        ? frame.plot.right - row.width - GAP * 2
+        : frame.plot.left + GAP + GAP;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = colors.grid;
+    ctx.fillRect(start - GAP, top, row.width + GAP * 2, boxHeight);
+    ctx.restore();
+
+    const middle = top + boxHeight / 2;
+    let cursor = start;
+    for (const index of row.indexes) {
+      const entry = entries[index];
+      ctx.fillStyle = entry.color;
+      if (entry.dash) {
+        ctx.strokeStyle = entry.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(cursor, middle);
+        ctx.lineTo(cursor + swatch, middle);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        ctx.fillRect(cursor, middle - swatch / 2, swatch, swatch);
+      }
+      ctx.fillStyle = colors.ink;
+      ctx.fillText(entry.label, cursor + swatch + GAP, middle);
+      cursor += widths[index] + itemGap;
     }
-    ctx.fillStyle = colors.ink;
-    ctx.fillText(entry.label, cursor + swatch + GAP, middle);
-    cursor += widths[index] + itemGap;
   });
 }
 

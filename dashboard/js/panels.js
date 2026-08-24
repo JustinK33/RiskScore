@@ -21,6 +21,8 @@
  */
 
 import {
+  drawBars,
+  drawCategoryLabels,
   drawEmpty,
   drawFrame,
   drawLegend,
@@ -32,7 +34,7 @@ import {
   prepareCanvas,
 } from "./charts.js";
 import { renderTable } from "./dom.js";
-import { count, number, percent, toRows } from "./format.js";
+import { count, isMissing, labelize, MISSING, number, percent, signed, toRows } from "./format.js";
 
 /** Shared prologue: size the canvas, read the theme, get a context. */
 function begin(canvas) {
@@ -47,6 +49,19 @@ function nothing(canvas, message) {
   drawEmpty(ctx, width, height, message, colors);
   return { label: message, table: null };
 }
+
+/**
+ * An x axis with no ticks, for a chart whose categories are drawn by
+ * `drawCategoryLabels` instead.
+ *
+ * The domain is 0..1 so a category's centre is `(index + 0.5) / count` in data
+ * space, which is what lets a line series be overlaid on bars through the frame's
+ * own `toX` rather than by reaching for pixel offsets.
+ */
+const ORDINAL_X = { min: 0, max: 1, step: 1, ticks: [] };
+
+/** The data-space x of category `index` of `total`, matching `drawBars`' slots. */
+const slotCentre = (index, total) => (index + 0.5) / total;
 
 // --- calibration ---------------------------------------------------------------
 
@@ -256,6 +271,253 @@ export function drawThresholdCosts(canvas, payload, { selectedThreshold = null }
     (Number.isFinite(Number(selectedThreshold))
       ? ` This run selected ${number(selectedThreshold, 2)}.`
       : "");
+
+  return { label, table };
+}
+
+// --- the embargo ---------------------------------------------------------------
+
+/**
+ * The embargo's before/after rates as one row per origination year.
+ *
+ * Pure, exported, and tested, because the interesting case is structural rather
+ * than numeric: a vintage that appears in `before` and not in `after` was removed
+ * *entirely* - not one loan in it had matured by the snapshot. Treating that as a
+ * missing number would draw no bar, and no bar next to a 32.8% bar reads as a
+ * default rate of zero, which is the opposite of what happened.
+ */
+export function embargoRows(embargo) {
+  const before = embargo?.default_rate_by_vintage_before || {};
+  const after = embargo?.default_rate_by_vintage_after || {};
+  const vintages = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort(
+    // Numeric where both parse - "2013" and "2016" happen to sort correctly as
+    // strings, but a quarterly vintage key like "2013Q4" would not.
+    (left, right) => Number(left) - Number(right) || left.localeCompare(right),
+  );
+  // `isMissing` rather than `Number.isFinite` alone, because `Number(null)` is 0 -
+  // a null rate would plot as a vintage in which nobody defaulted.
+  const rate = (source, vintage) => {
+    if (isMissing(source[vintage])) return null;
+    const value = Number(source[vintage]);
+    return Number.isFinite(value) ? value : null;
+  };
+  return vintages.map((vintage) => {
+    const beforeRate = rate(before, vintage);
+    const afterRate = rate(after, vintage);
+    return {
+      vintage,
+      before: beforeRate,
+      after: afterRate,
+      dropped: afterRate === null && beforeRate !== null,
+      change: beforeRate === null || afterRate === null ? null : afterRate - beforeRate,
+    };
+  });
+}
+
+/**
+ * Measured default rate by origination year, before and after the embargo.
+ *
+ * This is the chart the project exists to be able to draw. Filtering to closed
+ * loans without an outcome-maturity rule keeps every loan that has already
+ * defaulted and throws away the ones still paying, so the measured default rate
+ * climbs with every vintage: 16.2%, 17.5%, 18.8%, 32.8%. That reads as a book
+ * deteriorating year over year and it is entirely survivorship bias - the recent
+ * vintages have simply had less time to finish repaying. Requiring
+ * `issue_d + term <= snapshot` flattens it to 16.2%, 14.5%, 13.0%, and deletes
+ * 2016 outright.
+ *
+ * Grouped bars rather than two lines: these are four independent measurements, not
+ * a trend through time, and a line implies you can read between the years.
+ */
+export function drawEmbargo(canvas, manifest) {
+  const rows = embargoRows(manifest?.embargo);
+  if (rows.length === 0) return nothing(canvas, "This run recorded no embargo comparison.");
+  const { ctx, width, height, colors } = begin(canvas);
+
+  const values = rows.flatMap((row) => [row.before, row.after]).filter((value) => value !== null);
+  const frame = drawFrame(ctx, {
+    width,
+    height,
+    x: ORDINAL_X,
+    y: { ...niceTicks(0, Math.max(...values, 0.05)), format: (value) => percent(value, 0) },
+    xTitle: "Origination year",
+    yTitle: "Measured default rate",
+    colors,
+  });
+  if (!frame) return { label: "Embargo chart, too small to draw.", table: null };
+
+  // Warm for the biased series and the accent green for the corrected one: these
+  // two are not peers, one of them is wrong, and the colours should not suggest a
+  // reader may pick either.
+  const vintages = rows.map((row) => row.vintage);
+  const { slot } = drawBars(ctx, frame, vintages, [
+    { values: rows.map((row) => row.before), color: colors.series[2] },
+    // `NaN` rather than `null`, because that is what `drawBars` skips - and a
+    // dropped vintage must draw nothing rather than a bar of height zero.
+    { values: rows.map((row) => row.after ?? Number.NaN), color: colors.series[0] },
+  ]);
+  drawCategoryLabels(ctx, frame, vintages, { colors, slot });
+  drawLegend(
+    ctx,
+    frame,
+    [
+      { label: "Closed loans only", color: colors.series[2] },
+      { label: "Embargo applied", color: colors.series[0] },
+    ],
+    { colors },
+  );
+
+  const table = renderTable(
+    [
+      { key: "vintage", label: "Vintage" },
+      {
+        key: "before",
+        label: "Closed only",
+        align: "right",
+        format: (row) => percent(row.before, 1),
+      },
+      {
+        key: "after",
+        label: "Embargoed",
+        align: "right",
+        format: (row) => (row.dropped ? "removed" : percent(row.after, 1)),
+      },
+      {
+        key: "change",
+        label: "Change",
+        align: "right",
+        // Percentage points, not a percentage of a percentage: the difference
+        // between two rates is not itself a rate.
+        format: (row) => (row.change === null ? MISSING : `${signed(row.change * 100, 1)} pp`),
+      },
+    ],
+    rows,
+    { caption: "Measured default rate by vintage, with and without the outcome-maturity embargo" },
+  );
+
+  const worst = rows.reduce((most, row) => ((row.before ?? -1) > (most.before ?? -1) ? row : most), rows[0]);
+  const dropped = rows.filter((row) => row.dropped).map((row) => row.vintage);
+  const kept = rows.filter((row) => row.after !== null);
+  const highestKept = kept.reduce((most, row) => (row.after > most.after ? row : most), kept[0] || null);
+  const label =
+    `Measured default rate by origination year. Counting closed loans alone, ${worst.vintage} reads ` +
+    `${percent(worst.before, 1)}` +
+    (highestKept
+      ? `; with the embargo applied the highest vintage is ${highestKept.vintage} at ${percent(highestKept.after, 1)}`
+      : "") +
+    (dropped.length
+      ? `. ${dropped.join(", ")} ${dropped.length === 1 ? "drops" : "drop"} out entirely - nothing originated then had matured by the snapshot.`
+      : ".");
+
+  return { label, table };
+}
+
+// --- per-vintage performance ---------------------------------------------------
+
+/** Partition names short enough for an axis label at 320px. */
+const PARTITION_TAGS = { train: "train", validation: "val", test: "test" };
+
+/**
+ * Default rate and AUC for each vintage, tagged with the partition it landed in.
+ *
+ * The category is the vintage *and* the partition, not the vintage alone: the
+ * split is chronological, so 2014 is split across train and validation and 2015
+ * across validation and test. Merging them would average a fitted partition with a
+ * held-out one and report the result as one number for the year.
+ *
+ * Two axes, because the pair is the diagnostic. A default rate that holds steady
+ * while AUC falls means the model is degrading; both moving together usually means
+ * the vintage is genuinely different. The AUC axis starts at 0.5 rather than 0
+ * because 0.5 is a coin flip, and a bar chart from zero makes 0.62 look like
+ * substantial skill.
+ */
+export function drawVintages(canvas, payload) {
+  const rows = toRows(payload?.vintages || {});
+  if (rows.length === 0) return nothing(canvas, "No per-vintage breakdown for this run.");
+  const { ctx, width, height, colors } = begin(canvas);
+
+  // Abbreviated by lookup, not by truncation: `"validation".slice(0, 5)` is
+  // "valid", which reads as an adjective about the vintage rather than the name of
+  // a partition. An unknown partition keeps its full name and simply takes more
+  // room, which is the failure a reader can act on.
+  const categories = rows.map(
+    (row) => `${row.vintage} ${PARTITION_TAGS[row.partition] || row.partition}`,
+  );
+  const rates = rows.map((row) => Number(row.default_rate));
+  const aucs = rows.map((row) => Number(row.auc_roc));
+
+  const frame = drawFrame(ctx, {
+    width,
+    height,
+    x: ORDINAL_X,
+    y: { ...niceTicks(0, Math.max(...rates.filter(Number.isFinite), 0.05)), format: (v) => percent(v, 0) },
+    y2: { ...niceTicks(0.5, Math.max(...aucs.filter(Number.isFinite), 0.75)), format: (v) => number(v, 2) },
+    xTitle: "Vintage and partition",
+    yTitle: "Default rate",
+    y2Title: "AUC ROC",
+    colors,
+  });
+  if (!frame) return { label: "Vintage chart, too small to draw.", table: null };
+
+  const { slot } = drawBars(ctx, frame, categories, [
+    { values: rates, color: colors.series[1] },
+  ]);
+  // The AUC series rides the ordinal axis by asking for each bar slot's centre in
+  // data space, so it stays aligned with the bars at any width without this
+  // function knowing a single pixel offset.
+  const aucPoints = aucs
+    .map((value, index) => [slotCentre(index, categories.length), value])
+    .filter(([, value]) => Number.isFinite(value));
+  drawLine(ctx, frame, aucPoints, { color: colors.series[0], width: 2.5, toY: frame.toY2 });
+  drawPoints(ctx, frame, aucPoints, { color: colors.series[0], toY: frame.toY2 });
+
+  drawCategoryLabels(ctx, frame, categories, { colors, slot });
+  drawLegend(
+    ctx,
+    frame,
+    [
+      { label: "Default rate (left)", color: colors.series[1] },
+      { label: "AUC ROC (right)", color: colors.series[0] },
+    ],
+    { colors, align: "right" },
+  );
+
+  const table = renderTable(
+    [
+      { key: "vintage", label: "Vintage" },
+      { key: "partition", label: "Partition", format: (row) => labelize(row.partition) },
+      { key: "rows", label: "Loans", align: "right", format: (row) => count(row.rows) },
+      { key: "defaults", label: "Defaults", align: "right", format: (row) => count(row.defaults) },
+      {
+        key: "default_rate",
+        label: "Default rate",
+        align: "right",
+        format: (row) => percent(row.default_rate, 1),
+      },
+      { key: "auc_roc", label: "AUC", align: "right", format: (row) => number(row.auc_roc) },
+      { key: "ks_statistic", label: "KS", align: "right", format: (row) => number(row.ks_statistic) },
+      { key: "brier_score", label: "Brier", align: "right", format: (row) => number(row.brier_score) },
+      {
+        key: "approval_rate",
+        label: "Approval",
+        align: "right",
+        format: (row) => percent(row.approval_rate, 1),
+      },
+    ],
+    rows,
+    { caption: "Metrics per origination year, within the partition that year belongs to" },
+  );
+
+  const scored = rows.filter((row) => !isMissing(row.auc_roc));
+  const weakest = scored.reduce(
+    (least, row) => (Number(row.auc_roc) < Number(least.auc_roc) ? row : least),
+    scored[0],
+  );
+  const label = weakest
+    ? `Default rate and AUC for ${rows.length} vintage-partition groups. AUC is weakest on ` +
+      `${weakest.vintage} (${weakest.partition}) at ${number(weakest.auc_roc)}, against a default rate ` +
+      `there of ${percent(weakest.default_rate, 1)}.`
+    : `Default rate for ${rows.length} vintage-partition groups; no AUC was recorded.`;
 
   return { label, table };
 }

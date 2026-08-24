@@ -78,6 +78,7 @@ const PROBE = `(() => {
     identityRows: document.querySelectorAll("#identityGrid .def").length,
     flowChips: document.querySelectorAll("#rowFlow .chip").length,
     detailRows: document.querySelectorAll("#runDetails .def").length,
+    embargoFacts: document.querySelectorAll("#embargoFacts .def").length,
     artifacts: document.querySelectorAll("#artifactLinks a").length,
     tables: [...document.querySelectorAll(".data-fallback table")].map(
       (t) => t.querySelectorAll("tbody tr").length,
@@ -268,6 +269,9 @@ try {
       if (report.metrics.some((value) => value === "-")) problems.push("a metric card is empty");
       if (report.identityRows !== 6) problems.push(`${report.identityRows} identity rows, want 6`);
       if (report.artifacts !== 12) problems.push(`${report.artifacts} artifact links, want 12`);
+      // Zero here means the manifest carried no embargo block, which would make the
+      // chart beside it a claim with nothing behind it.
+      if (report.embargoFacts !== 4) problems.push(`${report.embargoFacts} embargo facts, want 4`);
       if (report.tables.some((rows) => rows === 0)) problems.push("an empty fallback table");
       if (report.scoreFields < 4) problems.push(`${report.scoreFields} score fields, want the schema's`);
       if (report.scoreSelects < 1) problems.push("no categorical rendered as a select");

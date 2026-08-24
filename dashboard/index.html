@@ -174,6 +174,52 @@
         </aside>
       </section>
 
+      <h2 class="section-heading" id="embargoHeading">Survivorship bias and the embargo</h2>
+      <p class="section-note">
+        Filtering to closed loans keeps every loan that has already defaulted and discards the ones
+        still paying, so the measured default rate rises with every vintage - a book that looks like
+        it is deteriorating when it is only younger. Requiring
+        <code>issue_d + term &lt;= snapshot</code> before the split fixes it, and costs the recent
+        vintages entirely.
+      </p>
+      <section class="panel-grid" aria-labelledby="embargoHeading">
+        <figure class="panel chart-panel" aria-labelledby="embargoChartHeading">
+          <div class="panel-header">
+            <div>
+              <h2 id="embargoChartHeading">Default rate by vintage</h2>
+              <p>
+                The same loans measured two ways. Only the second is a default rate; the first is a
+                measurement of how much time has passed.
+              </p>
+            </div>
+          </div>
+          <canvas id="embargoChart" role="img" aria-label="Embargo comparison chart, loading"></canvas>
+          <figcaption id="embargoCaption" class="chart-caption"></figcaption>
+          <div id="embargoFallback"></div>
+        </figure>
+
+        <figure class="panel chart-panel" aria-labelledby="vintageHeading">
+          <div class="panel-header">
+            <div>
+              <h2 id="vintageHeading">Performance by vintage</h2>
+              <p>
+                Default rate and ranking quality per origination year, within the partition that year
+                belongs to. The split is chronological, so a year can appear in two partitions.
+              </p>
+            </div>
+          </div>
+          <canvas id="vintageChart" role="img" aria-label="Per-vintage metrics chart, loading"></canvas>
+          <figcaption id="vintageCaption" class="chart-caption"></figcaption>
+          <div id="vintageFallback"></div>
+        </figure>
+
+        <aside class="panel side-panel" aria-labelledby="embargoFactsHeading">
+          <h2 id="embargoFactsHeading">Embargo</h2>
+          <dl id="embargoFacts"></dl>
+          <p class="hint" id="embargoSummary"></p>
+        </aside>
+      </section>
+
       <h2 class="section-heading" id="scoreHeading">Score an applicant</h2>
       <p class="section-note">
         Posts to <code>POST /predict</code> - the same endpoint and the same loaded bundle a

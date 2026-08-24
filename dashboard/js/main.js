@@ -27,6 +27,7 @@ import {
   getRun,
   getRuns,
   getThresholdCosts,
+  getVintages,
   invalidate,
 } from "./api.js";
 import { observeResize } from "./charts.js";
@@ -41,7 +42,7 @@ import {
   setText,
 } from "./dom.js";
 import { count, number, percent, shortRunId, timestamp } from "./format.js";
-import { drawCalibration, drawThresholdCosts } from "./panels.js";
+import { drawCalibration, drawEmbargo, drawThresholdCosts, drawVintages } from "./panels.js";
 import { mountScorePanel } from "./score.js";
 
 /**
@@ -60,6 +61,7 @@ let state = {
   metrics: null,
   calibration: null,
   thresholdCosts: null,
+  vintages: null,
   runs: [],
   problems: [],
 };
@@ -115,14 +117,16 @@ async function load(runId = null) {
 
   // `allSettled`, not `all`: a run predating a given report should show every
   // panel it can. The rejected ones are collected and named in the banner.
-  const [model, runs, manifest, metrics, calibration, thresholdCosts] = await Promise.allSettled([
-    getModel(),
-    getRuns(),
-    runId ? getRun(runId) : getModel().then((identity) => getRun(identity.run_id)),
-    getMetrics(runId),
-    getCalibration(runId),
-    getThresholdCosts(runId),
-  ]);
+  const [model, runs, manifest, metrics, calibration, thresholdCosts, vintages] =
+    await Promise.allSettled([
+      getModel(),
+      getRuns(),
+      runId ? getRun(runId) : getModel().then((identity) => getRun(identity.run_id)),
+      getMetrics(runId),
+      getCalibration(runId),
+      getThresholdCosts(runId),
+      getVintages(runId),
+    ]);
 
   // Unwrapped exactly once each, because `value` records a failure as a side
   // effect and calling it twice on the same rejection would report it twice.
@@ -144,6 +148,7 @@ async function load(runId = null) {
     metrics: value(metrics, "metrics"),
     calibration: value(calibration, "calibration"),
     thresholdCosts: value(thresholdCosts, "threshold costs"),
+    vintages: value(vintages, "vintages"),
     runs: history?.runs || [],
     problems,
   };
@@ -158,6 +163,7 @@ function render() {
   renderRowFlow();
   renderMetrics();
   renderRunDetails();
+  renderEmbargoFacts();
   renderArtifacts();
   renderSanity();
   redraw();
@@ -189,6 +195,12 @@ function redraw() {
     drawThresholdCosts($("#thresholdChart"), state.thresholdCosts, {
       selectedThreshold: state.metrics?.metrics?.selected_threshold,
     }),
+  );
+  paint("#embargoChart", "#embargoCaption", "#embargoFallback", () =>
+    drawEmbargo($("#embargoChart"), state.manifest),
+  );
+  paint("#vintageChart", "#vintageCaption", "#vintageFallback", () =>
+    drawVintages($("#vintageChart"), state.vintages),
   );
 }
 
@@ -335,6 +347,35 @@ function renderRunDetails() {
   ]);
 }
 
+/**
+ * The embargo rule itself, beside the chart that shows what it bought.
+ *
+ * `rows_unknown_maturity` is here even when it is zero, and especially then: it
+ * counts loans whose term or issue date could not be read, which the embargo has to
+ * drop because it cannot prove they matured. A silent zero is the difference
+ * between "no rows were unreadable" and "nobody checked".
+ */
+function renderEmbargoFacts() {
+  const embargo = state.manifest?.embargo;
+  const node = $("#embargoFacts");
+  if (!node) return;
+  if (!embargo) {
+    replaceChildren(node, []);
+    setText("#embargoSummary", "This run predates the embargo record.");
+    return;
+  }
+  replaceChildren(node, [
+    definition("Snapshot", embargo.snapshot),
+    definition("Rule", "issue_d + term <= snapshot", { mono: true }),
+    definition("Immature, removed", count(embargo.rows_immature)),
+    definition("Maturity unknown, removed", count(embargo.rows_unknown_maturity)),
+  ]);
+  // The manifest's own one-line summary, verbatim. It is what `run.log` records and
+  // what the model card quotes, so showing anything reworded here would give a
+  // reader two versions of one fact to reconcile.
+  setText("#embargoSummary", embargo.summary || "");
+}
+
 function renderArtifacts() {
   const node = $("#artifactLinks");
   if (!node) return;
@@ -470,7 +511,10 @@ async function boot() {
   // One observer for both canvases. It fires on a window resize, on a panel
   // reflowing, and once when the layout first settles - which is the moment a
   // canvas finally has a width to be sized against.
-  observeResize([$("#calibrationChart"), $("#thresholdChart")], redraw);
+  observeResize(
+    [$("#calibrationChart"), $("#thresholdChart"), $("#embargoChart"), $("#vintageChart")],
+    redraw,
+  );
 
   // Not awaited alongside the reports: the score panel needs only `/api/schema`,
   // and a reader who came to try a prediction should not wait on seven report
