@@ -63,6 +63,7 @@ from sklearn.pipeline import Pipeline
 
 from risk_score.artifacts import ScoringBundle
 from risk_score.features import COLUMN_REGISTRY, ENGINEERED_BY_NAME
+from risk_score.modeling import engineering_prefix
 
 LOGGER = logging.getLogger(__name__)
 
@@ -147,11 +148,6 @@ def feature_sources(pipeline: Pipeline) -> tuple[str, ...]:
 def _preprocessing_prefix(pipeline: Pipeline) -> Pipeline:
     """Canonicalize -> engineer -> preprocess. Everything but the estimator."""
     return Pipeline(steps=pipeline.steps[:-1])
-
-
-def _engineering_prefix(pipeline: Pipeline) -> Pipeline:
-    """Canonicalize -> engineer. Produces the frame whose values reason codes cite."""
-    return Pipeline(steps=pipeline.steps[:2])
 
 
 def _densify(matrix: Any) -> np.ndarray[Any, Any]:
@@ -267,7 +263,7 @@ class Explainer:
     def __init__(self, bundle: ScoringBundle) -> None:
         self.pipeline = bundle.pipeline
         self.spec = bundle.feature_spec
-        self._engineer = _engineering_prefix(bundle.pipeline)
+        self._engineer = engineering_prefix(bundle.pipeline)
         self._preprocess = bundle.pipeline.named_steps["preprocess"]
         self._sources = feature_sources(bundle.pipeline)
         # Grouping indices computed once: a reason code is a sum over the columns

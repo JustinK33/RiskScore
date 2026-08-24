@@ -46,6 +46,7 @@ The two decisions behind this file are recorded separately: [0002 - feature engi
 | `split_by_time(features, target, *, train, validation, test, date_column)` | Partition by origination date. |
 | `build_preprocessor(spec, *, min_category_frequency)` | The `ColumnTransformer`, built from declared column lists. |
 | `build_model_pipeline(spec, estimator, *, min_category_frequency)` | The four-step `Pipeline`: raw frame in, probability out. |
+| `engineering_prefix(pipeline)` | The `canonicalize -> engineer` prefix of a fitted pipeline, sliced by step name. The frame humans read: reason codes cite its values, drift bins them. |
 | `train_logistic_regression(x_train, y_train, *, spec, config, ...)` | Fit the baseline on training rows only. |
 | `fit_with_validation_monitoring(spec, estimator, x_train, y_train, x_validation, y_validation, ...)` | Fit an estimator that watches validation, and return one `Pipeline`. |
 | `train_xgboost_model(x_train, y_train, *, spec, x_validation=None, y_validation=None, ...)` | Fit the boosted model, with early stopping when validation is supplied. |

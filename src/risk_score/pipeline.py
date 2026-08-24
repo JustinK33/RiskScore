@@ -79,6 +79,12 @@ from risk_score.data_loading import (
     filter_to_closed_loans,
     filter_to_terms,
 )
+from risk_score.drift import (
+    feature_drift,
+    metrics_by_vintage,
+    psi_band,
+    psi_table,
+)
 from risk_score.evaluation import (
     ClassificationMetrics,
     ValidationScores,
@@ -92,7 +98,12 @@ from risk_score.evaluation import (
 from risk_score.explain import DEFAULT_TOP_K, Explainer, build_background
 from risk_score.leakage_check import audit_columns
 from risk_score.logging_setup import bind_run_id, capture_run_log
-from risk_score.modeling import SUPPORTED_MODEL_TYPES, split_by_time, train_model
+from risk_score.modeling import (
+    SUPPORTED_MODEL_TYPES,
+    engineering_prefix,
+    split_by_time,
+    train_model,
+)
 from risk_score.transformers import build_feature_spec
 
 LOGGER = logging.getLogger(__name__)
@@ -105,6 +116,9 @@ CALIBRATION_TEST_FILENAME = "calibration_test.csv"
 CALIBRATION_VALIDATION_FILENAME = "calibration_validation.csv"
 THRESHOLD_COSTS_FILENAME = "threshold_costs_validation.csv"
 SHAP_SUMMARY_FILENAME = "shap_summary.csv"
+PSI_SCORE_FILENAME = "psi_score.csv"
+PSI_FEATURES_FILENAME = "psi_features.csv"
+VINTAGE_METRICS_FILENAME = "metrics_by_vintage.csv"
 CALIBRATION_FIGURE = "figures/calibration_test.png"
 RUN_LOG_FILENAME = "run.log"
 
@@ -402,7 +416,52 @@ def _execute_run(
     calibration_test = build_calibration_report(split.y_test, scores_test)
     calibration_validation = build_calibration_report(split.y_validation, scores_validation)
 
-    # --- 5. publish -------------------------------------------------------------
+    # --- 5. has the population moved --------------------------------------------
+    # Reference is train, comparison is test. The question a monitoring table
+    # answers is whether the rows the model is *used* on still look like the rows it
+    # was fitted on; validation sits between the two in time, so measuring against
+    # it would report a smaller shift than the one that matters.
+    engineer = engineering_prefix(model)
+    feature_psi = feature_drift(
+        engineer.transform(split.x_train), engineer.transform(split.x_test), spec=spec
+    )
+    # Training rows scored through the calibrator, because the score whose
+    # stability matters is the one that gets served. This extra pass over train is
+    # the entire compute cost of the drift section, and it buys the one number that
+    # can be watched without waiting for outcomes.
+    scores_train = _predict_default_probability(calibrator, split.x_train)
+    score_psi = psi_table(scores_train, scores_test)
+    score_psi_value = float(score_psi["psi_contribution"].sum())
+    # All three partitions in one table, labelled. A per-vintage default rate is
+    # only readable as a series, and the series is what shows the embargo holding:
+    # flat across years rather than climbing with vintage.
+    vintages = pd.concat(
+        [
+            metrics_by_vintage(
+                labels,
+                scores,
+                dates=frame[date_column],
+                threshold=threshold,
+                partition=name,
+            )
+            for name, labels, scores, frame in (
+                ("train", split.y_train, scores_train, split.x_train),
+                ("validation", split.y_validation, scores_validation, split.x_validation),
+                ("test", split.y_test, scores_test, split.x_test),
+            )
+        ],
+        ignore_index=True,
+    )
+    worst_feature = feature_psi.iloc[0]
+    LOGGER.info(
+        "drift train->test: score psi=%.4f (%s), worst feature %s psi=%.4f",
+        score_psi_value,
+        psi_band(score_psi_value),
+        worst_feature["feature"],
+        worst_feature["psi"],
+    )
+
+    # --- 6. publish -------------------------------------------------------------
     embargo_report = _embargo_summary(embargo)
     metadata = RunMetadata(
         run_id=run_id,
@@ -501,12 +560,28 @@ def _execute_run(
         # metrics file that grows a row per feature stops being readable.
         "top_features": list(shap_summary["feature"].head(DEFAULT_TOP_K)),
         "explainer": explainer.model_kind,
+        # Drift, headline only; the per-bucket working is in psi_score.csv and
+        # psi_features.csv. Named reference and comparison rather than left implicit,
+        # because a PSI is meaningless without knowing which two populations it
+        # compared.
+        "drift_reference": "train",
+        "drift_comparison": "test",
+        "psi_score": score_psi_value,
+        "psi_score_band": psi_band(score_psi_value),
+        "psi_feature_worst": str(worst_feature["feature"]),
+        "psi_feature_worst_value": float(worst_feature["psi"]),
+        # The list, not the count: "3 features drifted" sends a reader to a CSV,
+        # and the names answer the question on the spot.
+        "psi_features_unstable": list(feature_psi.loc[feature_psi["band"] != "stable", "feature"]),
     }
     (staging / METRICS_FILENAME).write_text(json.dumps(payload, indent=2), encoding="utf-8")
     calibration_test.curve.to_csv(staging / CALIBRATION_TEST_FILENAME, index=False)
     calibration_validation.curve.to_csv(staging / CALIBRATION_VALIDATION_FILENAME, index=False)
     threshold_costs.to_csv(staging / THRESHOLD_COSTS_FILENAME, index=False)
     shap_summary.to_csv(staging / SHAP_SUMMARY_FILENAME, index=False)
+    score_psi.to_csv(staging / PSI_SCORE_FILENAME, index=False)
+    feature_psi.to_csv(staging / PSI_FEATURES_FILENAME, index=False)
+    vintages.to_csv(staging / VINTAGE_METRICS_FILENAME, index=False)
     # `plot_calibration_curve` writes where it is told and does not create
     # directories, which is correct for a plotting helper and means the caller
     # makes the subdirectory.

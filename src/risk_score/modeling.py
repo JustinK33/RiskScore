@@ -432,6 +432,31 @@ def build_model_pipeline(
     )
 
 
+def engineering_prefix(pipeline: Pipeline) -> Pipeline:
+    """The ``canonicalize -> engineer`` prefix of a fitted pipeline.
+
+    The frame this produces is the one humans read: declared dtypes, percent
+    strings already parsed, derived features present, and nothing scaled or
+    one-hot encoded yet. Reason codes cite its values and the drift tables bin
+    them, so both get it from here rather than each slicing the steps themselves.
+
+    Sliced by step *name*. An index slice would keep working, wrongly, if a step
+    were ever inserted ahead of the engineer - handing callers an un-engineered
+    frame whose columns simply do not include the derived features, which reads as
+    "the model has no derived features" rather than as a bug.
+
+    Sound because ``Pipeline`` does not clone the steps it is given: the returned
+    object holds the same fitted transformers, not copies of them.
+    """
+    names = [name for name, _ in pipeline.steps]
+    if "engineer" not in names:
+        raise ValueError(
+            f"Not a model pipeline: expected an `engineer` step, found {names}. "
+            "Pipelines built by `build_model_pipeline` always have one."
+        )
+    return Pipeline(steps=pipeline.steps[: names.index("engineer") + 1])
+
+
 def train_logistic_regression(
     x_train: pd.DataFrame,
     y_train: pd.Series,
