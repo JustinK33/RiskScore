@@ -41,7 +41,8 @@ The two decisions behind this file are recorded separately: [0002 - feature engi
 | Name | What it does |
 | --- | --- |
 | `TimeWindow` | A named, inclusive date range. `parse` expands partial dates; `mask` selects rows; `label` prints it. |
-| `TimeSplit` | The three partitions plus a full account of every row that reached none of them. |
+| `TimeSplit` | The three partitions plus a full account of every row that reached none of them. `.validation` hands back the wrapper below. |
+| `ValidationPartition` | The validation `x` and `y`, wrapped so nothing else can be handed to a fitter. The only thing `risk_score.calibration.fit_calibrator` accepts. |
 | `split_by_time(features, target, *, train, validation, test, date_column)` | Partition by origination date. |
 | `build_preprocessor(spec, *, min_category_frequency)` | The `ColumnTransformer`, built from declared column lists. |
 | `build_model_pipeline(spec, estimator, *, min_category_frequency)` | The four-step `Pipeline`: raw frame in, probability out. |

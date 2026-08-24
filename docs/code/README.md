@@ -34,6 +34,13 @@ Read these in order; each one hands its output to the next.
 | `src/risk_score/config.py` | [config.md](config.md) | One validated run configuration. Unknown keys raise instead of becoming defaults. |
 | `src/risk_score/modeling.py` | [modeling.md](modeling.md) | The tri-split, the declared preprocessor, and the trainers. No dtype inference, no fit on validation. |
 
+## Measuring and deciding
+
+| File | Page | One line |
+| --- | --- | --- |
+| `src/risk_score/evaluation.py` | [evaluation.md](evaluation.md) | The reported metrics, and the cost-sensitive threshold search behind a partition guard. |
+| `src/risk_score/calibration.py` | [calibration.md](calibration.md) | The reliability curve with sample counts, the ECE, and the correction that is now actually applied. |
+
 ## Fixtures
 
 | File | Page | One line |

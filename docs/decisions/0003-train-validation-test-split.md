@@ -19,6 +19,7 @@ The reported `selected_threshold_total_cost` was, by construction, the best numb
 
 The same argument applies with more force to calibration, because a calibrator has parameters.
 `calibrate_model` was written to fit a sigmoid on held-out scores and was never called, which is the only reason the Brier score in the committed artifact was not also fitted on the rows it described.
+[ADR 0006](0006-calibration-on-validation.md) settles where that calibrator is fitted now, and what it costs.
 
 Two further problems compounded it.
 
