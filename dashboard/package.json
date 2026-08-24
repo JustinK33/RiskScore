@@ -1,0 +1,9 @@
+{
+  "name": "riskscore-dashboard",
+  "private": true,
+  "type": "module",
+  "description": "Marker file only: declares that dashboard/js/*.js are ES modules so `node --test` parses them as such. There are no dependencies and there is no build step, by design - see docs/decisions/0009-vanilla-dashboard.md.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
