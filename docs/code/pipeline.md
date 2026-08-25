@@ -16,7 +16,8 @@ Choosing it on the same rows the headline metrics come from turns those metrics 
 The old run drew a reliability curve, computed a Brier score from uncorrected probabilities, and dropped the correction on the floor - so the reported Brier described a model nobody would have shipped (audit B05).
 
 **Immature loans were never removed.**
-Filtering to closed statuses looks obviously right and is quietly wrong: a 36-month loan issued in 2016 has only closed by a 2018 snapshot if it defaulted *early*, while the ones still paying read as `Current` and get dropped. The measured default rate by vintage therefore climbed 15.6% → 18.5% → 20.2% → 24.3% and then fell to 14.7%, a shape driven entirely by the snapshot date, and the time split reports on exactly the most contaminated vintages.
+Filtering to closed statuses looks obviously right and is quietly wrong: a 36-month loan issued in 2016 has only closed by a 2018 snapshot if it defaulted *early*, while the ones still paying read as `Current` and get dropped.
+The measured default rate by vintage therefore climbed 15.6% → 18.5% → 20.2% → 24.3% and then fell to 14.7%, a shape driven entirely by the snapshot date, and the time split reports on exactly the most contaminated vintages.
 
 **Feature engineering happened here.**
 So the persisted artifact could not preprocess a request the way the model was fitted, which is a class of bug that only appears in production.

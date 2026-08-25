@@ -79,7 +79,8 @@ Two exclusions in the implementation are deliberate:
 - **`bool` is excluded before the numeric check.** `True` is an `int` in Python, so a truthy flag reaching a metric column would print `1.0000` - a perfect score.
 - **`nan` renders as `-`.** A single-class vintage legitimately has no AUC, and that is missing data, not a zero.
 
-`0.0` stays `0.0000`. It was measured.
+`0.0` stays `0.0000`.
+It was measured.
 
 ### Nothing on the card is computed here
 
@@ -120,7 +121,8 @@ Both `comparison_payload` and `columnar` go through it, and the tests dump with 
 
 Not an invariant of this file, but the bug that proved the coupling: `save_bundle` wrote `manifest.json` with `sort_keys=True`, so the round trip returned `rows` as `closed, mature, raw` instead of the order the filters actually ran in, and `riskscore card` printed a stage table that read as nonsense while the card published by the run itself was correct.
 
-`rows` and `split_windows` are **ordered data**. `artifacts.py` no longer sorts them; `test_the_manifest_keeps_the_order_its_dicts_were_built_in` is the proof.
+`rows` and `split_windows` are **ordered data**.
+`artifacts.py` no longer sorts them; `test_the_manifest_keeps_the_order_its_dicts_were_built_in` is the proof.
 
 ### The warning block sits directly under the headline numbers
 

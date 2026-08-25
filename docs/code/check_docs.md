@@ -4,7 +4,9 @@
 
 Make the per-file documentation impossible to let rot.
 
-Nothing about a stale `docs/code/` page fails a test, appears in a diff, or looks wrong at a glance. A file gets renamed, its page keeps describing the old one, and a year later the page is worse than no page - because a reader trusts it. Every documentation convention in this repository that is not enforced here is an aspiration.
+Nothing about a stale `docs/code/` page fails a test, appears in a diff, or looks wrong at a glance.
+A file gets renamed, its page keeps describing the old one, and a year later the page is worse than no page - because a reader trusts it.
+Every documentation convention in this repository that is not enforced here is an aspiration.
 
 Three checks, in the order a reader notices the failure:
 
@@ -14,11 +16,13 @@ Three checks, in the order a reader notices the failure:
 
 Plus a fourth that is really about the index: every page has to be linked from `docs/code/README.md`, because an index nobody is forced to update is an index that goes stale in the same silent way.
 
-This file is itself in scope, which is why this page exists. A rule that exempts its own enforcement is a rule with a hole in it.
+This file is itself in scope, which is why this page exists.
+A rule that exempts its own enforcement is a rule with a hole in it.
 
 ## Public API
 
-A script. No exports worth importing, though the three module constants are the actual specification and are meant to be read:
+A script.
+No exports worth importing, though the three module constants are the actual specification and are meant to be read:
 
 | Name | What it is |
 | --- | --- |
@@ -41,38 +45,50 @@ Reads the filesystem under the repository root, located from `__file__` rather t
 
 Reads every `docs/code/*.md`, including `README.md` for the link check.
 
-Writes to stdout. Modifies nothing.
+Writes to stdout.
+Modifies nothing.
 
-Stdlib only - `pathlib` and `sys`. No dependency, so it runs in a bare checkout before `pip install`.
+Stdlib only - `pathlib` and `sys`.
+No dependency, so it runs in a bare checkout before `pip install`.
 
 ## Invariants and failure modes
 
 **A page maps to a code file by stem, with two named overrides.**
-`features.py` → `features.md`. The overrides exist because `dashboard/styles/app.css` and `src/risk_score/api/app.py` share a stem, and `docs/code/app.md` was already the Python one. Both stylesheets are renamed - `styles-tokens.md` and `styles-app.md` - rather than only the one that clashed, because an asymmetric pair reads as an accident.
+`features.py` → `features.md`.
+The overrides exist because `dashboard/styles/app.css` and `src/risk_score/api/app.py` share a stem, and `docs/code/app.md` was already the Python one.
+Both stylesheets are renamed - `styles-tokens.md` and `styles-app.md` - rather than only the one that clashed, because an asymmetric pair reads as an accident.
 
 **Both directions are checked.**
-A missing page and an orphaned page are different failures with different fixes: the first means somebody added a file, the second means somebody renamed or deleted one and the page survived. Checking only the first is the common form of this script and it is the half that goes stale.
+A missing page and an orphaned page are different failures with different fixes: the first means somebody added a file, the second means somebody renamed or deleted one and the page survived.
+Checking only the first is the common form of this script and it is the half that goes stale.
 
 **`EXEMPT` is a dict, not a set, and the values are the reasons.**
-An unexplained exemption is indistinguishable from an oversight. Two entries: both `__init__.py` files, which re-export names and state a dependency direction. `src/risk_score/api/__init__.py`'s one load-bearing consequence - that importing it pulls fastapi in transitively - is documented where it constrains code, in [cli.md](cli.md) and [bench.md](bench.md).
+An unexplained exemption is indistinguishable from an oversight.
+Two entries: both `__init__.py` files, which re-export names and state a dependency direction.
+`src/risk_score/api/__init__.py`'s one load-bearing consequence - that importing it pulls fastapi in transitively - is documented where it constrains code, in [cli.md](cli.md) and [bench.md](bench.md).
 
 **`*.test.js` is excluded by rule, not by exemption.**
-Six files today and one more with every new module. Listing them individually would make `EXEMPT` grow with the suite, and the rule is a real rule: a test file's page is its module's **Related tests** section.
+Six files today and one more with every new module.
+Listing them individually would make `EXEMPT` grow with the suite, and the rule is a real rule: a test file's page is its module's **Related tests** section.
 
 **Headings are matched with surrounding newlines.**
 `f"\n{heading}\n" not in f"\n{text}"` - so `## Purpose` does not match a line reading `## Purpose and scope`, and a heading that happens to appear inside a fenced code block on its own line does match, which is a false negative nobody has hit and would notice immediately.
 
 **The heading order is not enforced.**
-Presence is. Every page happens to use the canonical order and a reordered page is harder to skim, which is the whole reason for fixed headings - but a check on order would fail on a page that added a legitimate extra `##` section, and none of them do.
+Presence is.
+Every page happens to use the canonical order and a reordered page is harder to skim, which is the whole reason for fixed headings - but a check on order would fail on a page that added a legitimate extra `##` section, and none of them do.
 
 **`check_docs.py` is in scope; `pyproject.toml` and `.gitignore` are not.**
-The scope line is `docs/README.md`'s and it is a decision, not an omission: configs are either self-describing or documented where they constrain code. `scripts/*.py` and `scripts/*.mjs` are in scope because both files there contain real logic - this one and the dashboard probe.
+The scope line is `docs/README.md`'s and it is a decision, not an omission: configs are either self-describing or documented where they constrain code.
+`scripts/*.py` and `scripts/*.mjs` are in scope because both files there contain real logic - this one and the dashboard probe.
 
 **The link check is on `(page.name)` appearing anywhere in the index.**
-A substring match on the Markdown link target, which is loose enough to accept any link text and tight enough that a page nobody linked fails. It does not check that the row says anything true.
+A substring match on the Markdown link target, which is loose enough to accept any link text and tight enough that a page nobody linked fails.
+It does not check that the row says anything true.
 
 **Every problem is printed, then the count.**
-No early return. Adding four files should produce four lines in one run, not four runs.
+No early return.
+Adding four files should produce four lines in one run, not four runs.
 
 ## What must NOT live here
 

@@ -2,7 +2,8 @@
 
 ## Purpose
 
-Draw on a canvas correctly. Pixels, ticks, scales and fonts - nothing about credit risk.
+Draw on a canvas correctly.
+Pixels, ticks, scales and fonts - nothing about credit risk.
 
 The old dashboard's charts were wrong in five specific ways, and each one is a rule in this file.
 
@@ -40,7 +41,8 @@ The old dashboard's charts were wrong in five specific ways, and each one is a r
 
 Numbers and a `CanvasRenderingContext2D` in; drawing, and geometry objects, out.
 
-Imports nothing. No fetching, no DOM construction, no domain vocabulary.
+Imports nothing.
+No fetching, no DOM construction, no domain vocabulary.
 `palette` is the one function that reads the document, and it degrades to hardcoded readable colours when there is no `document` at all - which is what lets it be tested under `node --test`.
 
 **Everything is in CSS pixels.** `prepareCanvas` sets the bitmap to `size * devicePixelRatio` and then applies `setTransform(ratio, 0, 0, ratio, 0, 0)`, so every subsequent coordinate, font size, and line width in this file and in `panels.js` is a layout unit. Drawing code never sees the device ratio.
@@ -52,36 +54,52 @@ Imports nothing. No fetching, no DOM construction, no domain vocabulary.
 ## Invariants and failure modes
 
 **`niceTicks` steps at 1, 2, 5 and powers of ten, chosen at geometric midpoints.**
-The multiplier is picked by comparing the raw step against `Math.SQRT2`, `Math.sqrt(10)`, and `Math.sqrt(50)` times the power of ten - which is d3's `tickIncrement`, transcribed. Arithmetic midpoints (1.5, 3.5, 7.5) look equivalent and put the boundary in the wrong place for a logarithmic quantity, giving a step of 2 where 1 is the better fit for a sixth of the cases.
+The multiplier is picked by comparing the raw step against `Math.SQRT2`, `Math.sqrt(10)`, and `Math.sqrt(50)` times the power of ten - which is d3's `tickIncrement`, transcribed.
+Arithmetic midpoints (1.5, 3.5, 7.5) look equivalent and put the boundary in the wrong place for a logarithmic quantity, giving a step of 2 where 1 is the better fit for a sixth of the cases.
 
 **The domain is rounded outward, so the data never touches the frame.**
-`min` floors to a multiple of the step and `max` ceils. A point drawn exactly on the axis is a point a reader cannot see and cannot read the value of.
+`min` floors to a multiple of the step and `max` ceils.
+A point drawn exactly on the axis is a point a reader cannot see and cannot read the value of.
 
 **Tick labels are built by index multiplication and then `toFixed(decimals)`.**
-Accumulating `value += step` drifts: five additions of 0.1 give `0.7000000000000001`, and that is what the axis would say. `min + i * step` then a fixed precision derived from the step's own magnitude gives `0.7`. `decimals` comes from the step, so a step of 0.05 labels two places and a step of 5 labels none - a tick carries the precision of its step and no more.
+Accumulating `value += step` drifts: five additions of 0.1 give `0.7000000000000001`, and that is what the axis would say.
+`min + i * step` then a fixed precision derived from the step's own magnitude gives `0.7`.
+`decimals` comes from the step, so a step of 0.05 labels two places and a step of 5 labels none - a tick carries the precision of its step and no more.
 
 **A degenerate domain is still an axis with width.**
-A constant series, an all-zero column, a `NaN` bound, and a reversed pair are four separate cases and each has its own test. A constant series gets a unit domain around its value; an all-zero column gets `0..1`; a non-finite bound falls back to `0..1` rather than producing `NaN` ticks that then draw nothing and log nothing; a reversed pair is accepted and ordered. The reason all four are handled rather than guarded against at the call site is that all four occur - a run with one vintage, a PSI column with no drift, a metric absent from a partial run.
+A constant series, an all-zero column, a `NaN` bound, and a reversed pair are four separate cases and each has its own test.
+A constant series gets a unit domain around its value; an all-zero column gets `0..1`; a non-finite bound falls back to `0..1` rather than producing `NaN` ticks that then draw nothing and log nothing; a reversed pair is accepted and ordered.
+The reason all four are handled rather than guarded against at the call site is that all four occur - a run with one vintage, a PSI column with no drift, a metric absent from a partial run.
 
 **`linearScale` maps a zero-width domain to the middle of the range.**
-`(v - min) / (max - min)` is `NaN` when the domain is a point, and `NaN` coordinates draw nothing at all - silently. The midpoint is the only defensible answer, and it is visible.
+`(v - min) / (max - min)` is `NaN` when the domain is a point, and `NaN` coordinates draw nothing at all - silently.
+The midpoint is the only defensible answer, and it is visible.
 
 **`prepareCanvas` only assigns the bitmap when the target size changed, and uses `setTransform` not `scale`.**
-The guard is what removes the blank flash on resize. `setTransform` rather than `scale` because `scale` *accumulates*: two draws without an intervening reset give a 2x-scaled chart, then 4x. There is no `save`/`restore` pairing to get wrong if the transform is set absolutely each time.
+The guard is what removes the blank flash on resize.
+`setTransform` rather than `scale` because `scale` *accumulates*: two draws without an intervening reset give a 2x-scaled chart, then 4x.
+There is no `save`/`restore` pairing to get wrong if the transform is set absolutely each time.
 
 A zero-size canvas - one inside a `hidden` section - does not get a zero-size bitmap, because a zero-width bitmap throws on some operations and produces an unrecoverable context on others.
 
 **`palette` reads custom properties once per draw, and never caches across draws.**
-Caching would be the obvious optimization and would break the theme toggle, which changes `data-theme` and calls `redraw()` with no other signal. One `getComputedStyle` per chart per draw is five calls per frame in the worst case, which is not measurable against the drawing itself.
+Caching would be the obvious optimization and would break the theme toggle, which changes `data-theme` and calls `redraw()` with no other signal.
+One `getComputedStyle` per chart per draw is five calls per frame in the worst case, which is not measurable against the drawing itself.
 
 **`axisPadding` measures, and only pays for what is drawn.**
-A right-hand axis costs nothing when there is no `y2`. An axis title reserves exactly one line. The widest y label decides the left gutter. This is the difference between a `-12,500` label sitting inside the canvas and sitting outside it.
+A right-hand axis costs nothing when there is no `y2`.
+An axis title reserves exactly one line.
+The widest y label decides the left gutter.
+This is the difference between a `-12,500` label sitting inside the canvas and sitting outside it.
 
 **`drawFrame` returns `null` when the canvas is narrower than its own furniture.**
-At 320px with a wide y axis, the plot rectangle's width goes negative, and drawing into a negative rectangle produces axes that cross and a series drawn inside out - which looks like data. Refusing and letting the caller draw the empty message is the only honest outcome. Every `panels.js` renderer checks for `null`.
+At 320px with a wide y axis, the plot rectangle's width goes negative, and drawing into a negative rectangle produces axes that cross and a series drawn inside out - which looks like data.
+Refusing and letting the caller draw the empty message is the only honest outcome.
+Every `panels.js` renderer checks for `null`.
 
 **Grid lines are horizontal only, and 1px lines are offset by half a pixel.**
-Vertical grid lines on charts whose x axis is ordinal (vintages, PSI buckets) would imply a continuum that is not there. The half-pixel offset is because a 1px line drawn on an integer coordinate straddles two device rows and renders as a 2px blur at ratio 1.
+Vertical grid lines on charts whose x axis is ordinal (vintages, PSI buckets) would imply a continuum that is not there.
+The half-pixel offset is because a 1px line drawn on an integer coordinate straddles two device rows and renders as a 2px blur at ratio 1.
 
 **`drawLine` clips to the plot rectangle.**
 A series whose domain was computed from a different partition, or a point outside the rounded domain, would otherwise draw over the axis labels.
@@ -90,13 +108,16 @@ A series whose domain was computed from a different partition, or a point outsid
 The selected-threshold marker sits wherever the threshold is, including at 0.98. A label anchored left at that position is drawn off the canvas.
 
 **`drawBars` derives geometry from the category count, and `drawCategoryLabels` thins by measurement.**
-Neither takes a hardcoded bar width or a hardcoded "every nth label". Twelve vintages at 1440px label all twelve; the same twelve at 320px label every third, decided by `measureText` against the available slot.
+Neither takes a hardcoded bar width or a hardcoded "every nth label".
+Twelve vintages at 1440px label all twelve; the same twelve at 320px label every third, decided by `measureText` against the available slot.
 
 **`drawLegend` greedy-wraps rather than overflowing.**
 A legend too wide for the plot wraps to a second row instead of spilling past the axis, and the wrap is computed from measured entry widths.
 
 **`observeResize` coalesces with `requestAnimationFrame`.**
-A drag-resize fires `ResizeObserver` dozens of times a second. Without coalescing that is dozens of full redraws per second; with it, one per frame. Combined with `api.js`'s cache, a resize storm issues zero network requests and draws once per frame.
+A drag-resize fires `ResizeObserver` dozens of times a second.
+Without coalescing that is dozens of full redraws per second; with it, one per frame.
+Combined with `api.js`'s cache, a resize storm issues zero network requests and draws once per frame.
 
 ## What must NOT live here
 
@@ -110,7 +131,8 @@ A drag-resize fires `ResizeObserver` dozens of times a second. Without coalescin
 
 `dashboard/js/charts.test.js`, 25 tests - the largest suite in the dashboard, because this is where the arithmetic is.
 
-The tests assert *exact* values, not shapes. `assert(ticks.length > 0)` is why the `i / 5` axes survived as long as they did.
+The tests assert *exact* values, not shapes.
+`assert(ticks.length > 0)` is why the `i / 5` axes survived as long as they did.
 
 - `ticks are 1-2-5 steps, not the data range divided by five` and `the domain is rounded outwards so the data never touches the frame` pin the two properties the old implementation lacked.
 - `tick labels do not drift with floating point` is the `0.7000000000000001` case.

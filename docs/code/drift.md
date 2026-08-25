@@ -38,7 +38,8 @@ One AUC over a multi-year window hides whether the model works in every year of 
 ## Inputs and outputs
 
 In: two `Series` for a PSI, two **engineered** frames plus a `FeatureSpec` for `feature_drift`, and a labels/scores/dates triple for the vintage table.
-Out: DataFrames. Nothing here reads or writes a file; `pipeline.py` decides where the CSVs go.
+Out: DataFrames.
+Nothing here reads or writes a file; `pipeline.py` decides where the CSVs go.
 
 Engineered frames, not the design matrix and not the raw extract.
 A PSI per one-hot column would report fifty numbers about `addr_state` and none about `addr_state`, and the whole value of the table is that a human reads a row and knows what to do.
@@ -123,7 +124,9 @@ A partition boundary lands mid-year often enough that refusing to produce the ta
 
 ## Related tests
 
-`tests/test_drift.py`, 29 tests. Every PSI assertion is against a hand-computed constant rather than a range, because there is a whole family of plausible-but-wrong implementations - dropping NaN, closing the outer edges, renormalizing after the floor - and all of them return numbers in the same ballpark as the correct one. `assert psi > 0.25` would pass for most of them.
+`tests/test_drift.py`, 29 tests.
+Every PSI assertion is against a hand-computed constant rather than a range, because there is a whole family of plausible-but-wrong implementations - dropping NaN, closing the outer edges, renormalizing after the floor - and all of them return numbers in the same ballpark as the correct one.
+`assert psi > 0.25` would pass for most of them.
 
 - `test_psi_matches_the_arithmetic_written_out_by_hand` is the anchor: 50/50 shifting to 25/75 is 0.27465307216702742, written out longhand in the test body.
 - `test_a_population_against_itself_scores_exactly_zero` and `test_every_bucket_contributes_a_non_negative_amount` pin the two structural properties.

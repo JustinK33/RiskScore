@@ -65,10 +65,14 @@ The service does not have to know which variant it loaded.
 ## Alternatives considered
 
 **Keep them in and add a caveat to the README.**
-The original state. A caveat in prose does not survive someone reading only the metrics JSON, and it does not make the model servable.
+The original state.
+A caveat in prose does not survive someone reading only the metrics JSON, and it does not make the model servable.
 
 **Drop them from the registry entirely.**
-Simpler, and it forecloses the comparison. The leakage cost stops being a number and goes back to being an assertion. It also loses `int_rate` as a *reporting* variable - relating predicted risk to the price actually charged is a genuinely useful chart.
+Simpler, and it forecloses the comparison.
+The leakage cost stops being a number and goes back to being an assertion.
+It also loses `int_rate` as a *reporting* variable - relating predicted risk to the price actually charged is a genuinely useful chart.
 
 **Keep `int_rate` and drop `grade`/`sub_grade`, on the theory that a continuous rate is less of a direct label proxy.**
-It is not: `int_rate` is a deterministic function of `sub_grade` in this dataset. Splitting the four would create a tier boundary with no meaning behind it.
+It is not: `int_rate` is a deterministic function of `sub_grade` in this dataset.
+Splitting the four would create a tier boundary with no meaning behind it.

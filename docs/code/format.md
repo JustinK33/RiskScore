@@ -51,37 +51,50 @@ So the gate is: nullish or empty string, then `typeof` is neither `"number"` nor
 A numeric *string* is accepted on purpose - a CSV-derived payload sends `"0.7123"` - but an array, an object, and a boolean are not.
 
 **A real zero still formats as zero.**
-This is the other half of the same invariant and the reason it needs its own test. An approval rate of exactly 0, a contribution of exactly 0, a cost of exactly 0 are all legitimate readings and must not become dashes.
+This is the other half of the same invariant and the reason it needs its own test.
+An approval rate of exactly 0, a contribution of exactly 0, a cost of exactly 0 are all legitimate readings and must not become dashes.
 
 **Digits are pinned, not trimmed.**
-`number(0.5)` is `0.500`, not `0.5`. A column of metrics where the digit count varies per row is unreadable in a table, and `minimumFractionDigits` is set equal to `maximumFractionDigits` for exactly that reason.
+`number(0.5)` is `0.500`, not `0.5`.
+A column of metrics where the digit count varies per row is unreadable in a table, and `minimumFractionDigits` is set equal to `maximumFractionDigits` for exactly that reason.
 
 **`percent` multiplies rather than using `style: "percent"`.**
-`Intl`'s percent style would be the obvious choice, but it applies locale-specific spacing before the `%` and would put the sign in a locale-specific place. Every percentage on this page appears in a table column of its own width, so a stable `12.3%` beats a locally idiomatic one.
+`Intl`'s percent style would be the obvious choice, but it applies locale-specific spacing before the `%` and would put the sign in a locale-specific place.
+Every percentage on this page appears in a table column of its own width, so a stable `12.3%` beats a locally idiomatic one.
 
 **`signed` never emits `+0.000`.**
-An exactly-zero contribution is not a positive contribution. A tornado plot where a zero-weight feature is labelled `+0.000` reads as a small push in the approve direction, which is a claim the model did not make.
+An exactly-zero contribution is not a positive contribution.
+A tornado plot where a zero-weight feature is labelled `+0.000` reads as a small push in the approve direction, which is a claim the model did not make.
 
 **`cost` is unitless.**
-The cost matrix in this project is a *ratio* - the relative price of a false negative against a false positive - not currency. Formatting it with a currency symbol would invent a unit the model never had, and would then have to invent a currency.
+The cost matrix in this project is a *ratio* - the relative price of a false negative against a false positive - not currency.
+Formatting it with a currency symbol would invent a unit the model never had, and would then have to invent a currency.
 
 **`timestamp` renders in UTC, always.**
-The run id embeds a UTC instant. If the generated-at line rendered in local time, the two identifiers for the same run would disagree by hours, and somebody would eventually conclude they were different runs. The formatter takes the ISO string's own fields via `Date.prototype.toISOString`, so there is no timezone database involved and no DST edge.
+The run id embeds a UTC instant.
+If the generated-at line rendered in local time, the two identifiers for the same run would disagree by hours, and somebody would eventually conclude they were different runs.
+The formatter takes the ISO string's own fields via `Date.prototype.toISOString`, so there is no timezone database involved and no DST edge.
 
 **An unparseable instant is a dash, not `Invalid Date`.**
-`new Date("nonsense").toISOString()` throws a `RangeError`; `String(new Date("nonsense"))` is the literal text `Invalid Date`. Both are worse than a dash.
+`new Date("nonsense").toISOString()` throws a `RangeError`; `String(new Date("nonsense"))` is the literal text `Invalid Date`.
+Both are worse than a dash.
 
 **`shortRunId` returns anything that is not run-id-shaped untouched.**
-It matches the `<instant>-<model>-<tier>-<sha>` shape and, failing that, hands the string back. A future run-id format change therefore degrades to a long label rather than to a truncated one that drops the part that distinguishes two runs.
+It matches the `<instant>-<model>-<tier>-<sha>` shape and, failing that, hands the string back.
+A future run-id format change therefore degrades to a long label rather than to a truncated one that drops the part that distinguishes two runs.
 
 **`psiBand` returns a token *name*, not a colour.**
-`{tone: "warn"}` becomes `color: var(--warn)` at the point of use, so the palette stays in `tokens.css` and dark mode follows without this module knowing a theme exists. The bands are inclusive at their lower bound - exactly 0.1 is moderate, exactly 0.25 is significant - matching how the thresholds are stated in the drift literature and in `drift.py`.
+`{tone: "warn"}` becomes `color: var(--warn)` at the point of use, so the palette stays in `tokens.css` and dark mode follows without this module knowing a theme exists.
+The bands are inclusive at their lower bound - exactly 0.1 is moderate, exactly 0.25 is significant - matching how the thresholds are stated in the drift literature and in `drift.py`.
 
 **`labelize` leaves initialisms upper.**
-`auc_roc` becomes `AUC ROC` and not `Auc Roc`, via an `INITIALISMS` set. Otherwise every metric label on the page reads as a typo.
+`auc_roc` becomes `AUC ROC` and not `Auc Roc`, via an `INITIALISMS` set.
+Otherwise every metric label on the page reads as a typo.
 
 **`toRows` truncates to the shortest column.**
-A columnar payload with columns of unequal length is a server bug, but the client's job is to render what it can. Zipping to the longest would produce `undefined` cells that then have to be guarded everywhere downstream; zipping to the shortest produces fewer rows, which is visible and safe. A payload that is not columnar at all yields no rows rather than throwing.
+A columnar payload with columns of unequal length is a server bug, but the client's job is to render what it can.
+Zipping to the longest would produce `undefined` cells that then have to be guarded everywhere downstream; zipping to the shortest produces fewer rows, which is visible and safe.
+A payload that is not columnar at all yields no rows rather than throwing.
 
 **`numericColumn` counts what it drops.**
 A chart that silently skips non-finite points is a chart that lies about its sample size, so the count comes back with the values and the panel puts it in the caption.
@@ -95,7 +108,8 @@ A chart that silently skips non-finite points is a chart that lies about its sam
 
 ## Related tests
 
-`dashboard/js/format.test.js`, 19 tests. Run with `node --test` from `dashboard/`.
+`dashboard/js/format.test.js`, 19 tests.
+Run with `node --test` from `dashboard/`.
 
 - `every kind of absent value formats as a dash, never as zero` is the reason the module exists. It runs `null`, `undefined`, `""`, `NaN`, `Infinity`, `[]`, `{}`, and `true` through every formatter. `[]` and `true` are the two that a `Number()`-based guard passes.
 - `a real zero still formats as zero` is its inseparable counterpart. Without it, "return a dash when in doubt" passes the first test and destroys legitimate data.

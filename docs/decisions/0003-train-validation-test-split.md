@@ -64,7 +64,8 @@ A number that got smaller for a stated reason is worth more than a large number 
 
 **Validation costs data twice over.**
 A year of vintages is removed from training and is not available for reporting either.
-On this dataset that is affordable. On a small one it would not be, and nested cross-validation would be the honest alternative - at the cost of a substantially more complex artifact, since there would be no single fitted model to serve.
+On this dataset that is affordable.
+On a small one it would not be, and nested cross-validation would be the honest alternative - at the cost of a substantially more complex artifact, since there would be no single fitted model to serve.
 
 **"Which partition is this?" becomes a type-level question.**
 `fit_calibrator` and `select_threshold` accept a partition-tagged `ValidationScores` wrapper rather than a bare array, so handing them test scores is a mypy error *and* a runtime error.

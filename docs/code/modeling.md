@@ -133,7 +133,8 @@ So `fit_with_validation_monitoring` does it in the open:
 
 1. Build the full pipeline, take `steps[:-1]` as the preprocessing prefix.
 2. `fit_transform` the prefix on train.
-3. **`transform`** - not `fit_transform` - validation through it. This is the line the whole no-leakage claim rests on, which is why it sits one line below the one above.
+3. **`transform`** - not `fit_transform` - validation through it.
+This is the line the whole no-leakage claim rests on, which is why it sits one line below the one above.
 4. Fit the estimator on both matrices with `eval_set=`.
 5. Reassemble a `Pipeline` from the already-fitted steps.
 

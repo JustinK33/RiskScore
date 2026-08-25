@@ -127,7 +127,8 @@ The cost is that it has to be constructed in `create_app` and reached through `a
 `tests/test_jobs.py` is 25 tests on stub children for that reason, and `test_a_real_retrain_publishes_a_run_and_the_service_swaps_to_it` is the one that uses the real one.
 
 **Nothing removes stored datasets.**
-The per-file cap bounds one upload; nothing bounds how many. Acceptable for a feature that is off by default and local, and the first thing to fix if it ever were not.
+The per-file cap bounds one upload; nothing bounds how many.
+Acceptable for a feature that is off by default and local, and the first thing to fix if it ever were not.
 
 ## Alternatives considered
 

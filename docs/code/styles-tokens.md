@@ -14,7 +14,8 @@ Three rules govern this file, and each one exists because the old stylesheet bro
 
 ## Public API
 
-The file declares no selectors of its own beyond `:root` and the two dark-theme gates. Its API is the custom-property names.
+The file declares no selectors of its own beyond `:root` and the two dark-theme gates.
+Its API is the custom-property names.
 
 | Group | Names |
 | --- | --- |
@@ -28,11 +29,13 @@ The file declares no selectors of its own beyond `:root` and the two dark-theme 
 | Shape | `--radius-sm`, `--radius`, `--radius-lg`, `--border` |
 | Layout | `--content-width` = 1240px |
 
-The `--chart-*` names are the ones with a second consumer: `charts.js`'s `palette()` resolves them on every draw. Renaming one silently falls back to that function's hardcoded readable default rather than failing, so a rename must be made in both files.
+The `--chart-*` names are the ones with a second consumer: `charts.js`'s `palette()` resolves them on every draw.
+Renaming one silently falls back to that function's hardcoded readable default rather than failing, so a rename must be made in both files.
 
 ## Inputs and outputs
 
-No imports. Loaded by `index.html` as a plain `<link>` **before** `app.css` - not via `@import`, which would serialize the two requests behind each other.
+No imports.
+Loaded by `index.html` as a plain `<link>` **before** `app.css` - not via `@import`, which would serialize the two requests behind each other.
 
 Read by `app.css` through `var()`, and by `charts.js` through `getComputedStyle(document.documentElement)`.
 
@@ -41,37 +44,53 @@ Read by `app.css` through `var()`, and by `charts.js` through `getComputedStyle(
 ## Invariants and failure modes
 
 **Light is the default palette.**
-Declared on `:root` unconditionally, with dark applied on top. So a stylesheet that fails to load halfway, or a `prefers-color-scheme` the browser does not report, degrades to legible dark-on-white rather than to black-on-black.
+Declared on `:root` unconditionally, with dark applied on top.
+So a stylesheet that fails to load halfway, or a `prefers-color-scheme` the browser does not report, degrades to legible dark-on-white rather than to black-on-black.
 
 **Dark is declared twice, and the duplication is deliberate.**
-Once as `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }`, once as `:root[data-theme="dark"]`. The media query is the OS preference; the attribute is an explicit choice. The `:not([data-theme="light"])` gate is the load-bearing part: without it, a reader who picks light on a dark-mode machine gets dark anyway and the toggle looks broken. The alternative - one block with a `:where()` selector list - was rejected because the two blocks answer different questions and a reader has to be able to see which is which.
+Once as `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }`, once as `:root[data-theme="dark"]`.
+The media query is the OS preference; the attribute is an explicit choice.
+The `:not([data-theme="light"])` gate is the load-bearing part: without it, a reader who picks light on a dark-mode machine gets dark anyway and the toggle looks broken.
+The alternative - one block with a `:where()` selector list - was rejected because the two blocks answer different questions and a reader has to be able to see which is which.
 
 **Dark is not the light palette inverted.**
-Three specific differences. Surfaces get *lighter* as they come forward, the opposite of light mode, because a raised surface on a dark page reads as closer when it is brighter. Shadows are nearly invisible, so borders do the separating and `--line` is proportionally stronger. The accent is lightened, because `#1f7a5a` on `#161a18` fails contrast for text - an inverted palette would have shipped an accent nobody could read.
+Three specific differences.
+Surfaces get *lighter* as they come forward, the opposite of light mode, because a raised surface on a dark page reads as closer when it is brighter.
+Shadows are nearly invisible, so borders do the separating and `--line` is proportionally stronger.
+The accent is lightened, because `#1f7a5a` on `#161a18` fails contrast for text - an inverted palette would have shipped an accent nobody could read.
 
 **Chart series are ordered by role, not by preference.**
-Series 1 is the subject of the chart, 2 the comparison, 3 the reference. So `--chart-series-1` is the same *meaning* across five charts, and a reader who learns the calibration chart can read the vintage chart. They are also chosen to be distinguishable in greyscale as well as in hue, because a colour-blind reader and a printed page are the same problem.
+Series 1 is the subject of the chart, 2 the comparison, 3 the reference.
+So `--chart-series-1` is the same *meaning* across five charts, and a reader who learns the calibration chart can read the vintage chart.
+They are also chosen to be distinguishable in greyscale as well as in hue, because a colour-blind reader and a printed page are the same problem.
 
 **`--chart-reference` is separate from the series colours.**
 The calibration diagonal and the PSI action lines are not data; giving them a series colour would make them read as a fourth measured series.
 
 **The spacing scale is 4px and has exactly eight steps.**
-Every gap and pad in `app.css` is one of these eight numbers. That is what stops the 13px/14px/18px drift the old stylesheet had - it had eleven distinct paddings, none of them intentional.
+Every gap and pad in `app.css` is one of these eight numbers.
+That is what stops the 13px/14px/18px drift the old stylesheet had - it had eleven distinct paddings, none of them intentional.
 
 **The type scale is in px, not rem.**
-Two reasons, and the first is decisive: the canvas font string has to be an absolute size, and a `rem`-based scale means JS would have to resolve the root font size and multiply, giving two computations that can disagree. The cost is that a browser font-size preference is not honoured in this fixed-layout dashboard, which is a real accessibility trade-off - mitigated by page zoom working correctly, since every length including the breakpoints is in px and zoom scales the px.
+Two reasons, and the first is decisive: the canvas font string has to be an absolute size, and a `rem`-based scale means JS would have to resolve the root font size and multiply, giving two computations that can disagree.
+The cost is that a browser font-size preference is not honoured in this fixed-layout dashboard, which is a real accessibility trade-off - mitigated by page zoom working correctly, since every length including the breakpoints is in px and zoom scales the px.
 
 **`--chart-font` and `--chart-font-label` are complete font shorthand strings, not sizes.**
-`600 11px system-ui, ...`. `canvas.font` takes a shorthand and nothing else, so a size alone would need JS to assemble a weight and a family - which is where a second font stack would creep in.
+`600 11px system-ui, ...`.
+`canvas.font` takes a shorthand and nothing else, so a size alone would need JS to assemble a weight and a family - which is where a second font stack would creep in.
 
 **The font stack is the system stack, with no webfont.**
-The old dashboard requested `Inter` in five places and never loaded it, so every hardcoded text offset in the drawing code was tuned against metrics the page never had. A system stack needs no loading, so `measureText` at first draw is correct. Adding a webfont would reintroduce the original bug in a subtler form and would need a `document.fonts.ready` gate before the first draw.
+The old dashboard requested `Inter` in five places and never loaded it, so every hardcoded text offset in the drawing code was tuned against metrics the page never had.
+A system stack needs no loading, so `measureText` at first draw is correct.
+Adding a webfont would reintroduce the original bug in a subtler form and would need a `document.fonts.ready` gate before the first draw.
 
 **`--border` is a whole shorthand, not a width.**
-`1px solid var(--line)`. Nested `var()` resolves per theme, so one token carries both the geometry and the themed colour, and `app.css` never spells `solid` again.
+`1px solid var(--line)`.
+Nested `var()` resolves per theme, so one token carries both the geometry and the themed colour, and `app.css` never spells `solid` again.
 
 **Every semantic colour has a soft variant where it is used as a background.**
-`--warn`/`--warn-soft`, `--danger`/`--danger-soft`, `--accent`/`--accent-soft`. A banner is soft-background with full-strength text; using the full strength as a background would fail contrast against the text on it in one theme or the other.
+`--warn`/`--warn-soft`, `--danger`/`--danger-soft`, `--accent`/`--accent-soft`.
+A banner is soft-background with full-strength text; using the full strength as a background would fail contrast against the text on it in one theme or the other.
 
 **`--focus` is its own token, not `--accent`.**
 The focus ring has to be visible against every surface including the accent-coloured button, so it is blue in both themes rather than following the accent.

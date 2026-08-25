@@ -118,7 +118,8 @@ On 12,000 synthetic loans with a true lifetime default rate of 15%, closed-only 
 
 The 2016 vintage reading 100% is the mechanism at its clearest: with a 2018-12 snapshot, the only 2016 loans that have closed are the ones that defaulted.
 
-That test covers the function. Four more cover the *run*, because a working function nothing calls was the original failure:
+That test covers the function.
+Four more cover the *run*, because a working function nothing calls was the original failure:
 
 - `tests/test_pipeline.py::test_the_maturity_embargo_runs_and_flattens_the_vintage_default_rate` reads the metrics payload a run wrote and asserts the before column climbs, the after column does not, and the censored vintage is gone.
 - `..::test_immature_loans_never_reach_any_partition` checks the calendar in all three partitions, which is how a filter accidentally applied after the split would be caught.

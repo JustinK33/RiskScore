@@ -215,7 +215,8 @@ Fits every model x tier combination on one identical split, publishes each as an
 Nothing is activated: choosing what to serve is a decision, not a side effect of measuring.
 
 `--tiers both` is the measurement that makes the tier policy defensible rather than asserted - it reports what admitting the lender's own price adds to the AUC.
-Expect it to add a lot. That is the point: a model that needs `int_rate` cannot score an applicant nobody has priced yet.
+Expect it to add a lot.
+That is the point: a model that needs `int_rate` cannot score an applicant nobody has priced yet.
 
 ## Explain one decision
 
