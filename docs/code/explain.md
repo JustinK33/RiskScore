@@ -30,7 +30,7 @@ The package would add a numba/llvmlite toolchain to the serving image, and a whe
 | `Explainer.explain` | A raw frame in, one `Explanation` per row out. |
 | `Explainer.global_summary` | Mean absolute contribution per feature over a population, ranked. |
 | `Explanation` | `baseline_log_odds`, every contribution sorted by magnitude, `total_log_odds`, `top(k)`, `adverse_reasons(k)`. |
-| `Contribution` | `feature`, `label`, `value`, `log_odds`, `direction`, `sentence()`. |
+| `Contribution` | `feature`, `label`, `value`, `log_odds`, `direction`, `display_value`, `sentence()`. |
 | `build_background` | The transformed training sample a bundle carries so an explainer needs no training data. |
 | `feature_label` | The human wording for a feature, read from the registry that declares it. |
 | `transformed_feature_names`, `feature_sources` | Design-matrix column names, and which feature each came from. |
@@ -52,6 +52,10 @@ for reason in explainer.explain(applicant_frame)[0].adverse_reasons(k=3):
 # loan_to_income_ratio=0.41 increases risk (+0.288 log-odds)
 # emp_length=1.0 increases risk (+0.130 log-odds)
 ```
+
+`Contribution.value` is the applicant's own raw value and `display_value` is that value as a human reads it - rounded to four places, with the encoder's `__missing__` sentinel rendered as "not provided".
+The two human-facing surfaces use the second one (`sentence()`, and `riskscore explain` without `--json`); the machine-facing ones use the first (`POST /predict`, `riskscore explain --json`), because rounding at the boundary would make a value disagree with the log-odds computed from it.
+The dashboard's `reasonValue` applies the same rule to the JSON on the client side.
 
 `shap_summary.csv` carries `feature`, `label`, `mean_abs_log_odds`, `mean_log_odds`, `columns`, `rank`.
 `metrics.json` carries only `top_features` (five names) and `explainer` (`linear` or `tree`), because a metrics file that grows a row per feature stops being readable.
@@ -118,6 +122,7 @@ The `columns` count is published too, so a reader can see that `addr_state`'s im
 - `test_every_declared_feature_appears_exactly_once_per_explanation` is what would catch a dropped feature silently folding into the baseline.
 - `test_one_hot_columns_collapse_into_their_source_feature` and `test_a_missing_value_indicator_is_attributed_to_the_feature_it_is_about` cover the name mapping in both of its non-obvious cases.
 - `test_a_reason_code_cites_the_applicants_own_value_not_a_scaled_one` is the readability claim, asserted against the engineered frame.
+- `test_a_reason_value_is_rounded_and_named_for_a_human_to_read` pins `display_value` against the same cases `dashboard/js/score.test.js` pins `reasonValue` against, so the CLI and the dashboard cannot start disagreeing about how a reason reads.
 - `test_the_background_is_capped_and_deterministic` is the byte-identical requirement.
 - `test_a_model_neither_path_can_explain_is_refused_at_construction`, `test_a_linear_bundle_without_a_background_is_refused` and `test_a_background_from_a_different_preprocessor_is_refused` are the three construction-time refusals. The last one matters most: numpy broadcasts a one-column background against an n-coefficient model without complaint, so a half-migrated bundle would produce reason codes that are plausible and wrong rather than an error.
 - `test_a_design_matrix_column_from_nowhere_is_reported_under_its_own_name` covers the unattributable-column branch, which is only reachable by calling `_source_of` directly - a preprocessor grown a step this module does not know about is the real cause and cannot be built through the public API.

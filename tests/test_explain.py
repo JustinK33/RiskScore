@@ -24,6 +24,7 @@ from sklearn.pipeline import Pipeline
 
 from risk_score.explain import (
     BACKGROUND_ROWS,
+    Contribution,
     Explainer,
     build_background,
     feature_label,
@@ -32,6 +33,7 @@ from risk_score.explain import (
 )
 from risk_score.pipeline import RunResult, train_run
 from risk_score.sample_data import make_synthetic_loans
+from risk_score.transformers import MISSING_CATEGORY
 from tests.conftest import SMALL_ROWS, requires_xgboost
 
 
@@ -196,6 +198,31 @@ def test_the_sentence_form_names_the_feature_the_value_and_the_direction(
     assert top.feature in sentence
     assert ("increases risk" in sentence) or ("reduces risk" in sentence)
     assert "log-odds" in sentence
+
+
+def test_a_reason_value_is_rounded_and_named_for_a_human_to_read() -> None:
+    """The human-facing forms format the value; the JSON forms do not.
+
+    Both of the interesting cases are ones where the raw value is correct and
+    unreadable: an engineered feature is a division result, so it arrives with
+    seventeen significant digits, and an absent field arrives as the encoder's
+    own sentinel. This is the property the dashboard's `reasonValue` pins on the
+    JavaScript side, tested here so the CLI and the dashboard agree.
+    """
+
+    def shown(value: object) -> str:
+        return Contribution(feature="f", label="F", value=value, log_odds=0.5).display_value
+
+    assert shown(0.13254630284179272) == "0.1325"
+    # A whole number stays whole rather than growing four zeros.
+    assert shown(9.0) == "9"
+    assert shown(MISSING_CATEGORY) == "not provided"
+    assert shown(None) == "not provided"
+    assert shown("") == "not provided"
+    # Text and integers pass through untouched: rounding a `purpose` is nonsense
+    # and `open_acc` has no fractional part to hide.
+    assert shown("credit_card") == "credit_card"
+    assert shown(9) == "9"
 
 
 # --- the background ------------------------------------------------------------

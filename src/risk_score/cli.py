@@ -456,7 +456,10 @@ def _explain(args: argparse.Namespace) -> int:
     print(f"  {'total log-odds':<24} {explanation.total_log_odds:+.3f}")
     print(f"\ntop {len(reasons)} reason(s), largest contribution first:")
     for item in reasons:
-        print(f"  {item.log_odds:+.3f}  {item.feature}={item.value}  ({item.label})")
+        # `display_value`, not `value`: this is the human-facing branch. The
+        # `--json` path above keeps the raw number, because a caller parsing it
+        # wants the value the log-odds were computed from.
+        print(f"  {item.log_odds:+.3f}  {item.feature}={item.display_value}  ({item.label})")
     return 0
 
 

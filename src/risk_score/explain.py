@@ -64,6 +64,7 @@ from sklearn.pipeline import Pipeline
 from risk_score.artifacts import ScoringBundle
 from risk_score.features import COLUMN_REGISTRY, ENGINEERED_BY_NAME
 from risk_score.modeling import engineering_prefix
+from risk_score.transformers import MISSING_CATEGORY
 
 LOGGER = logging.getLogger(__name__)
 
@@ -211,9 +212,42 @@ class Contribution:
             return "increases risk"
         return "reduces risk" if self.log_odds < 0 else "no effect"
 
+    @property
+    def display_value(self) -> str:
+        """:attr:`value` as a human reads it. Not what a machine should receive.
+
+        Two things need converting, and both are cases where the raw value is
+        correct and unreadable.
+
+        ``__missing__`` is :data:`~risk_score.transformers.MISSING_CATEGORY`, the
+        encoder's name for "this field was absent". Printing it verbatim shows an
+        applicant a modelling artefact, and it is not a rare path: missingness is
+        genuinely predictive, so an unfilled field is often among the *top*
+        drivers.
+
+        An engineered feature is a division result, so ``loan_to_income_ratio``
+        arrives as ``0.13254630284179272`` - a reason code claiming seventeen
+        significant digits of somebody's finances, which is a precision the model
+        never had.
+
+        The JSON forms deliberately do not use this: a caller parsing
+        ``/predict`` or ``riskscore explain --json`` wants the number, and
+        rounding at the boundary would make the value disagree with the log-odds
+        computed from it.
+        """
+        if self.value is None or self.value in (MISSING_CATEGORY, ""):
+            return "not provided"
+        if isinstance(self.value, float):
+            # `:g`-like trimming rather than a fixed width: `open_acc` is 9 and not
+            # 9.0000, while a ratio needs its four places.
+            return f"{self.value:.4f}".rstrip("0").rstrip(".")
+        return str(self.value)
+
     def sentence(self) -> str:
         """One line for an adverse action notice or a dashboard row."""
-        return f"{self.feature}={self.value} {self.direction} ({self.log_odds:+.3f} log-odds)"
+        return (
+            f"{self.feature}={self.display_value} {self.direction} ({self.log_odds:+.3f} log-odds)"
+        )
 
 
 @dataclass(frozen=True, slots=True)
