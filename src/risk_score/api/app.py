@@ -357,15 +357,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_router)
     _mount_dashboard(app, settings)
 
+    # "will serve on", not "serving on": this runs in `create_app`, so the socket
+    # is not bound yet and may never be - uvicorn reports `address already in use`
+    # *after* application startup completes. A line claiming to be serving,
+    # followed by a bind failure, reads as though the port were taken by this
+    # process rather than by the one already on it.
     _log.info(
-        "serving on %s:%d (docs %s, mutating routes: %s)",
+        "will serve on %s:%d (docs %s, mutating routes: %s)",
         settings.host,
         settings.port,
         "on" if settings.docs_enabled else "off",
         settings.mutating_routes_enabled(),
     )
     if settings.bind_is_public:
-        _log.warning("bound to %s, which is reachable off this host", settings.host)
+        _log.warning("configured to bind %s, which is reachable off this host", settings.host)
     return app
 
 
