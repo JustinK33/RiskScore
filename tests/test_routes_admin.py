@@ -144,6 +144,17 @@ def test_the_flag_is_checked_before_the_key(client: TestClient) -> None:
     assert "RISKSCORE_ALLOW_UPLOAD" in response.json()["detail"]
 
 
+def test_readiness_advertises_which_features_are_on(admin: TestClient) -> None:
+    """The dashboard reads this to decide whether to render a retrain panel at all.
+
+    Nothing is disclosed by it - a disabled route already answers a 403 naming its
+    variable, so the capability is discoverable by asking either way. What it buys
+    is not offering an operator a form whose every submission is a refusal.
+    """
+    assert admin.get("/readyz").json()["mutating_routes"] == "both"
+    assert admin.get("/healthz").json()["mutating_routes"] == "both"
+
+
 @pytest.mark.parametrize("presented", [None, "", "wrong-key", KEY + "x"])
 def test_an_enabled_route_still_needs_the_key(admin: TestClient, presented: str | None) -> None:
     headers = {} if presented is None else {"X-API-Key": presented}

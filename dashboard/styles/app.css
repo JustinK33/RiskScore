@@ -783,6 +783,41 @@ main {
   line-height: 1.35;
 }
 
+/*
+ * The file picker's own button, which is otherwise the only OS-drawn control on
+ * the page - a light grey chip with a light grey label, sitting inside a dark
+ * input on the dark theme and failing contrast outright. Styled as the ghost
+ * button, which is what it is: a secondary action beside a primary one.
+ *
+ * `padding-left: 0` on the input, because the button is now the input's left edge
+ * and the inherited padding put a gap of surface colour outside it.
+ */
+.field input[type="file"] {
+  padding-left: 0;
+  /* The native control lays its button and filename out itself, and the 40px
+     min-height leaves them vertically centred rather than baseline-aligned. */
+  align-content: center;
+  cursor: pointer;
+}
+
+.field input[type="file"]::file-selector-button {
+  min-height: 38px;
+  margin-right: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-right: var(--border);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.field input[type="file"]:hover::file-selector-button {
+  background: var(--accent-soft);
+}
+
 .form-actions {
   display: flex;
   flex-wrap: wrap;

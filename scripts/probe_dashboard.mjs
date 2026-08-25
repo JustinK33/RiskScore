@@ -98,6 +98,11 @@ const PROBE = `(() => {
     // Never empty in either state: with a comparison it carries the measured
     // leakage cost, and without one it carries the command that publishes it.
     comparisonNote: (document.querySelector("#comparisonNote")?.textContent || "").length,
+    // Hidden markup is still in the document, so this is the only way to tell a
+    // panel that is switched off from one that failed to mount. Which of the two it
+    // should be is decided from /readyz below, not guessed.
+    retrainVisible: document.querySelector("#retrainSection")?.hidden === false,
+    retrainModels: document.querySelectorAll("#retrainModel option").length,
     importanceRows: document.querySelectorAll("#importanceTable tbody tr").length,
     // The bar column is the only cell on the page whose content is a node rather
     // than text, so it is the one that a change to renderTable would silently
@@ -327,6 +332,19 @@ async function waitForChrome() {
   throw new Error("Chrome never opened its debugging port");
 }
 
+/**
+ * Whether this server will accept a retrain, from its own readiness payload.
+ *
+ * Read here rather than assumed, because the retrain panel must be *absent* on a
+ * default server and *present* on one started with both flags, and "the panel is
+ * missing" and "the panel is correctly switched off" are the same pixels.
+ */
+const expectRetrain =
+  (await fetch(new URL("readyz", BASE))
+    .then((response) => response.json())
+    .then((body) => body.mutating_routes)
+    .catch(() => "none")) === "both";
+
 let failures = 0;
 try {
   await waitForChrome();
@@ -383,6 +401,18 @@ try {
       if (report.scoreSelects < 1) problems.push("no categorical rendered as a select");
       if (report.scoreError) problems.push(report.scoreError);
       if (report.switchError) problems.push(report.switchError);
+      if (report.retrainVisible !== expectRetrain) {
+        problems.push(
+          expectRetrain
+            ? "the retrain panel is hidden on a server that allows retraining"
+            : "the retrain panel is offered by a server that would refuse it",
+        );
+      }
+      // Populated from the model list in `retrain.js`, so zero means the panel
+      // rendered a select a reader cannot choose anything from.
+      if (expectRetrain && report.retrainModels < 2) {
+        problems.push(`${report.retrainModels} retrain model option(s), want every supported one`);
+      }
       if (!report.verdict) problems.push("no decision in the verdict block");
       if (report.reasonRows === 0) problems.push("a verdict with no reason codes");
       if (report.narrowBars) problems.push(`${report.narrowBars} reason bar(s) render at zero width`);
@@ -400,6 +430,7 @@ try {
           `wide=[${report.wideTables.join("; ")}] ` +
           `score=${report.scoreFields}f/${report.scoreGroups}g/${report.scoreSelects}s ` +
           `verdict=${report.verdict || "none"}/${report.reasonRows}r ` +
+          `retrain=${report.retrainVisible ? report.retrainModels + "m" : "off"} ` +
           `banners=${report.banners.length}`,
       );
       for (const problem of problems) console.log(`       - ${problem}`);

@@ -379,7 +379,7 @@ async def artifact(request: Request, run_id: RunIdPath, name: str) -> Response:
 
 
 @router.get("/healthz", response_model=HealthOut, tags=["health"], summary="Liveness")
-async def healthz(request: Request) -> HealthOut:
+async def healthz(request: Request, settings: SettingsDep) -> HealthOut:
     """Is the process answering.
 
     Deliberately 200 even with no model loaded, and deliberately separate from
@@ -393,6 +393,7 @@ async def healthz(request: Request) -> HealthOut:
         bundle_loaded=service is not None,
         run_id=None if service is None else service.metadata.run_id,
         reason=request.app.state.load_error,
+        mutating_routes=settings.mutating_routes_enabled(),
     )
 
 
@@ -403,14 +404,19 @@ async def healthz(request: Request) -> HealthOut:
     tags=["health"],
     summary="Readiness",
 )
-async def readyz(service: ServiceDep) -> HealthOut:
+async def readyz(service: ServiceDep, settings: SettingsDep) -> HealthOut:
     """Can this process score a request.
 
     503 when it cannot, via the shared dependency, so a load balancer stops
     sending traffic to a replica whose bundle failed to load. This is the probe
     the container's ``HEALTHCHECK`` uses.
     """
-    return HealthOut(status="ok", bundle_loaded=True, run_id=service.metadata.run_id)
+    return HealthOut(
+        status="ok",
+        bundle_loaded=True,
+        run_id=service.metadata.run_id,
+        mutating_routes=settings.mutating_routes_enabled(),
+    )
 
 
 def _validated(applicant_model: type[BaseModel], payload: dict[str, Any]) -> dict[str, Any]:

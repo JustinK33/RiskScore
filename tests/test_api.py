@@ -292,6 +292,10 @@ def test_healthz_and_readyz_when_loaded(client: TestClient) -> None:
     assert health["status"] == "ok"
     assert health["bundle_loaded"] is True
     assert ready.status_code == 200
+    # The default fixture switches nothing on, and the dashboard reads this to
+    # decide whether to offer a retrain panel at all.
+    assert health["mutating_routes"] == "none"
+    assert ready.json()["mutating_routes"] == "none"
 
 
 def test_healthz_is_ok_and_readyz_is_503_with_no_bundle(tmp_path: Path) -> None:
@@ -313,6 +317,7 @@ def test_healthz_is_ok_and_readyz_is_503_with_no_bundle(tmp_path: Path) -> None:
         "bundle_loaded": False,
         "run_id": None,
         "reason": "no active run under empty/",
+        "mutating_routes": "none",
     }
     assert ready.status_code == 503
     assert predict.status_code == 503

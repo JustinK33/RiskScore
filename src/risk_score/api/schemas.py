@@ -287,10 +287,24 @@ class SchemaOut(BaseModel):
 
 
 class HealthOut(BaseModel):
+    """Whether the process is up, and what it will let a caller do.
+
+    ``mutating_routes`` is here rather than on the identity endpoint because it
+    describes this *process* and not the model it loaded. It leaks nothing: the
+    admin routes are always registered and answer a disabled feature with a 403
+    naming the variable, so the capability is already discoverable by asking. What
+    it buys is a dashboard that shows the retrain panel only where the retrain can
+    actually run, instead of offering a form whose every submission is a 403.
+    """
+
     status: Literal["ok", "degraded"]
     bundle_loaded: bool
     run_id: str | None = None
     reason: str | None = None
+    mutating_routes: Literal["upload", "retrain", "both", "none"] = Field(
+        default="none",
+        description="Which of the upload and retrain routes are switched on.",
+    )
 
 
 class RunListOut(BaseModel):

@@ -346,6 +346,83 @@
         </form>
         <div id="scoreResult" class="score-result"></div>
       </section>
+
+      <!-- Hidden until /readyz reports both features on, which it does only when
+           the operator started the service with RISKSCORE_ALLOW_UPLOAD=1 and
+           RISKSCORE_ALLOW_RETRAIN=1. A form whose every submission is a 403 reads
+           as a broken feature rather than a switched-off one. -->
+      <section id="retrainSection" hidden>
+        <h2 class="section-heading" id="retrainHeading">Retrain from a CSV</h2>
+        <p class="section-note">
+          Three steps, each with its own risk: <code>POST /api/datasets</code> stores the bytes
+          under their own SHA-256 with a size cap, <code>POST /api/runs</code> starts one fit at a
+          time in a child process, and <code>GET /api/jobs</code> watches it. Scoring keeps
+          answering from the current model throughout, and the new run is published atomically or
+          not at all - no request ever sees a half-built model.
+        </p>
+        <section class="panel" aria-labelledby="retrainHeading">
+          <!-- The same structure the generated score form uses - fieldset.field-group
+               wrapping div.field > (label, control, small.hint) - so it inherits the
+               subgrid alignment and needs no CSS of its own. Labels are the request's
+               own field names, which is what the score form does too. -->
+          <form id="retrainForm">
+            <p class="banner" id="retrainBanner" hidden></p>
+            <div class="form-body">
+              <fieldset class="field-group">
+                <legend>Retrain</legend>
+                <div class="field">
+                  <label for="retrainDataset">
+                    dataset<abbr class="required" title="required">*</abbr>
+                  </label>
+                  <input
+                    id="retrainDataset"
+                    type="file"
+                    name="dataset"
+                    accept=".csv,text/csv"
+                    required
+                  />
+                  <small class="hint">
+                    A raw extract, in the columns the data dictionary lists.
+                    <code>riskscore make-sample-data</code> writes one.
+                  </small>
+                </div>
+                <div class="field">
+                  <label for="retrainModel">model_type</label>
+                  <select id="retrainModel" name="model_type"></select>
+                  <small class="hint">Options come from the service, not from this page.</small>
+                </div>
+                <div class="field">
+                  <label for="retrainTier">feature_tier</label>
+                  <select id="retrainTier" name="feature_tier">
+                    <option value="origination_only">origination_only</option>
+                    <option value="with_lender_priced">with_lender_priced</option>
+                  </select>
+                  <small class="hint">
+                    The second admits <code>int_rate</code>, <code>grade</code>,
+                    <code>sub_grade</code>, and <code>installment</code>, which encode the decision
+                    being predicted. See ADR 0005 and the comparison above for what it buys and
+                    what it costs.
+                  </small>
+                </div>
+                <div class="field">
+                  <label for="retrainKey">
+                    api_key<abbr class="required" title="required">*</abbr>
+                  </label>
+                  <input id="retrainKey" type="password" name="api_key" autocomplete="off" required />
+                  <small class="hint">
+                    <code>RISKSCORE_API_KEY</code>. Held in <code>sessionStorage</code> for this tab
+                    only, and sent only to the two routes that ask for it.
+                  </small>
+                </div>
+              </fieldset>
+            </div>
+            <div class="form-actions">
+              <button type="submit" id="retrainSubmit">Upload and retrain</button>
+            </div>
+          </form>
+          <p class="hint" id="retrainProgress" role="status"></p>
+        </section>
+      </section>
     </main>
 
     <footer class="footer">

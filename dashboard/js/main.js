@@ -67,6 +67,7 @@ import {
   importanceRows,
   variantName,
 } from "./panels.js";
+import { mountRetrainPanel } from "./retrain.js";
 import { mountScorePanel } from "./score.js";
 
 /**
@@ -91,6 +92,10 @@ let state = {
   comparison: null,
   runs: [],
   problems: [],
+  // From /readyz, not from a guess: whether this process will accept an upload and
+  // a retrain at all. `boot` reads it once to decide whether the retrain panel
+  // exists, because a form whose every submission is a 403 reads as broken.
+  mutatingRoutes: "none",
 };
 
 /** Below these, a test-set metric is noise being reported to three decimals. */
@@ -200,6 +205,7 @@ async function load(runId = null) {
     comparison: comparison.reason?.status === 404 ? null : value(comparison, "comparison"),
     runs: history?.runs || [],
     problems,
+    mutatingRoutes: health.mutating_routes || "none",
   };
 
   render();
@@ -785,6 +791,27 @@ async function boot() {
 
   try {
     await load(runIdFromUrl());
+    // After the first load, because whether this panel exists at all is a fact the
+    // service reports in its readiness payload - and once, because `load` runs
+    // again on every run switch and a listener per switch is a retrain per click.
+    mountRetrainPanel({
+      section: $("#retrainSection"),
+      form: $("#retrainForm"),
+      banner: $("#retrainBanner"),
+      progress: $("#retrainProgress"),
+      submitButton: $("#retrainSubmit"),
+      mutatingRoutes: state.mutatingRoutes,
+      onDone: async () => {
+        // The URL first: a reader who arrived on `?run_id=<old>` and then retrained
+        // would otherwise be shown the new active run under a link to the previous
+        // one, and would share that link.
+        globalThis.history.replaceState(null, "", globalThis.location.pathname);
+        // `null`, meaning the active run, and not the id the job reported: they are
+        // the same run, and asking for the active one keeps the page pointed at
+        // whatever is being served rather than pinned to one id.
+        await reload(null);
+      },
+    });
   } catch (error) {
     // Anything that reaches here is a bug in this file rather than a failed
     // request - `load` handles those - so it says so, and the console keeps the
@@ -795,10 +822,16 @@ async function boot() {
   }
 }
 
-/** Re-read everything from the server. Used after a retrain. */
-export async function reload() {
+/**
+ * Re-read everything from the server, dropping every cached payload.
+ *
+ * `runId` defaults to whatever is on screen. A retrain passes `null` instead,
+ * which means the active run - the one it just published - because the point of
+ * the reload is that the page is now describing a superseded model.
+ */
+export async function reload(runId = state.runId) {
   invalidate();
-  await load(state.runId);
+  await load(runId);
 }
 
 boot();
