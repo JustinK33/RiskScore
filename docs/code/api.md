@@ -125,7 +125,7 @@ It is called first on every load and its result decides what the header badge sa
 - `retry-after is parsed as seconds, and anything odd is null` covers the empty string, an HTTP-date, a negative, and `NaN`.
 - Polling, with an injected `sleep` so the suite does not wait: `polling stops on a terminal status and reports every poll`, `an unknown status is terminal, so a client cannot loop forever`, `a 404 gives up at once, because an evicted job never comes back`, and `a transient poll failure is tolerated, a persistent one is not`.
 
-The HTTP contract on the other side of these paths is tested in `tests/test_api.py`, `tests/test_routes_admin.py`, and `tests/test_reports.py`; the end-to-end join is `scripts/probe_dashboard.mjs`, which drives a real load, a real `POST /predict`, and a real run switch in Chrome.
+The HTTP contract on the other side of these paths is tested in `tests/test_api.py` and `tests/test_routes_admin.py`; the end-to-end join is `scripts/probe_dashboard.mjs`, which drives a real load, a real `POST /predict`, and a real run switch in Chrome.
 
 ## Known limits
 

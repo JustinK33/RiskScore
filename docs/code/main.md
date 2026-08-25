@@ -151,7 +151,7 @@ Three of its probes exercise this file's lifecycle specifically:
 - `SWITCH` picks another option, dispatches `change`, and waits for the identity strip to show the run it asked for - which is the whole run-history feature end to end, including `replaceState` and the second `load`. A run present in the registry whose reports are missing produces a page of dashes and an amber pill, and that is indistinguishable from a fresh load in a screenshot. It also asserts the option labels are distinct, which is the fix for two compare runs sharing a minute.
 - `retrainVisible` is compared against the target server's own `/readyz`, so the mount decision is checked in both directions.
 
-The server side of every payload this file reads is tested in `tests/test_reports.py`, `tests/test_api.py`, and `tests/test_routes_admin.py`.
+The server side of every payload this file reads is tested in `tests/test_api.py` and `tests/test_routes_admin.py`.
 
 ## Known limits
 

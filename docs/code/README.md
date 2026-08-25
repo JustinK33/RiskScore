@@ -95,14 +95,20 @@ The layering is enforced by import direction and readable from the import lines:
 | `dashboard/js/score.js` | [score.md](score.md) | The applicant form, generated from `/api/schema`, and the reason-code tornado. |
 | `dashboard/js/retrain.js` | [retrain.md](retrain.md) | Upload, start, poll, reload. Hidden unless the service says both routes are on. |
 | `dashboard/js/main.js` | [main.md](main.md) | Boot, state, wiring. `redraw` never fetches, and a partial run still renders. |
+| `dashboard/index.html` | [index.md](index.md) | Every node the JS fills, in reading order. The accessibility contract, written once. |
+| `dashboard/styles/tokens.css` | [styles-tokens.md](styles-tokens.md) | Every value declared once, including the ones the canvas has to agree with. |
+| `dashboard/styles/app.css` | [styles-app.md](styles-app.md) | Every component style and every breakpoint. `minmax(0, 1fr)` is the load-bearing detail. |
 
+The two stylesheet pages are named `styles-*` because [app.md](app.md) is already `src/risk_score/api/app.py`.
 The `*.test.js` files have no pages of their own; each module's page names its tests under **Related tests**.
 
-## Fixtures
+## Fixtures and verification
 
 | File | Page | One line |
 | --- | --- | --- |
 | `src/risk_score/sample_data.py` | [sample_data.md](sample_data.md) | Synthetic raw-format extract that reproduces survivorship bias by the real mechanism. |
+| `tests/conftest.py` | [conftest.md](conftest.md) | The shared fixtures. One real bundle fitted once, and no test reads the environment. |
+| `scripts/probe_dashboard.mjs` | [probe_dashboard.md](probe_dashboard.md) | The dashboard measured in real Chrome at six widths in two themes, with the offender named. |
 
 ## Reading the audit IDs
 
