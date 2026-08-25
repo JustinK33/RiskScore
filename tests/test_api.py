@@ -964,3 +964,63 @@ def test_require_api_key_distinguishes_unconfigured_from_wrong() -> None:
     # The success path raises nothing. Asserted by calling it, since a gate that
     # rejects a valid key is the failure nobody notices until a deploy.
     require_api_key(Settings(api_key="right"), "right")
+
+
+# --- the scoring service, without HTTP -----------------------------------------
+
+
+def test_a_bundle_that_cannot_explain_still_scores(
+    trained_run: RunResult, applicant: dict[str, object]
+) -> None:
+    """A missing SHAP background degrades reason codes; it does not stop the service.
+
+    The whole reason `ScoringService.__init__` catches rather than raises. Refusing
+    to start would trade a service that can still make decisions for a feature that
+    is not what it is for, and finding out per request would turn a missing
+    artifact into a 500 on the hot path. `/readyz` reports it either way, so the
+    condition is visible rather than silent.
+    """
+    from dataclasses import replace
+
+    from risk_score.api.scoring import ScoringService
+
+    service = ScoringService(replace(trained_run.bundle, shap_background=None))
+
+    assert service.can_explain is False
+    assert service.explainer_error is not None and "shap_background" in service.explainer_error
+
+    score = service.score(applicant, with_reasons=True)
+    assert 0.0 <= score.default_probability <= 1.0
+    # Asked for reasons, given none, and no exception. The alternative - raising
+    # because reasons were requested - makes `explain=true` a way to break scoring.
+    assert score.reasons == ()
+    assert score.baseline_log_odds is None
+    assert score.approved is (score.decision == "approve")
+
+
+def test_a_reason_value_is_json_safe_whatever_the_frame_held() -> None:
+    """The three types `json.dumps` cannot write, converted at the boundary.
+
+    A reason code exists to be sent to somebody, and each of these arrives from a
+    real frame: numpy scalars from any numeric column, a non-finite float from a
+    ratio with a zero denominator, and a Timestamp from `earliest_cr_line`. NaN is
+    the dangerous one - `json.dumps` emits a bare `NaN` token, which is not valid
+    JSON, so one missing value would take out the whole response.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from risk_score.api.scoring import _reason
+    from risk_score.explain import Contribution
+
+    def reason_for(value: object) -> object:
+        return _reason(Contribution(feature="f", label="F", value=value, log_odds=0.5)).value
+
+    assert reason_for(np.float64(1.5)) == 1.5
+    assert isinstance(reason_for(np.int64(3)), int)
+    assert reason_for(float("nan")) is None
+    assert reason_for(float("inf")) is None
+    assert reason_for(pd.Timestamp("2015-06-01")) == "2015-06-01T00:00:00"
+    # A plain value is passed through untouched, which is the case that must not
+    # regress while the three conversions above are being maintained.
+    assert reason_for("RENT") == "RENT"

@@ -99,7 +99,8 @@ Not an inconsistency: a batch is a scoring job, and a single call is a decision 
 - `test_batch_matches_single_scoring` is the important one: the same applicant through `/predict` and `/predict/batch` gets the same probability, so the vectorized path is not a second implementation with its own rounding.
 - `test_predict_accepts_both_extract_dialects` and `test_predict_accepts_a_source_alias` are the `object`-dtype policy paying off - `' 36 months'` and `36` both work, and so does a raw alias name.
 - `test_predict_reasons_are_ordered_by_absolute_contribution` and `test_predict_without_explain_omits_reasons` pin the reason contract.
-- `test_report_payloads_contain_no_nan_token` and `test_predict_scores_an_applicant` cover the serialization rules in `_reason` and around it.
+- `test_report_payloads_contain_no_nan_token` and `test_predict_scores_an_applicant` cover the serialization rules around `_reason`; `test_a_reason_value_is_json_safe_whatever_the_frame_held` covers the three conversions inside it directly. NaN is the one that matters: `json.dumps` writes a bare `NaN` token, which is not valid JSON, so a single missing value would take out the whole response rather than one cell.
+- `test_a_bundle_that_cannot_explain_still_scores` is the degradation contract. A bundle with no persisted background scores normally, answers `explain=true` with an empty reason list rather than an error, and reports the reason on `/readyz` - so the condition is visible without being fatal.
 - `tests/test_explain.py` holds the claim that the reason codes sum back to the model's own score, which is what makes them defensible rather than decorative.
 - `tests/test_bench.py::test_scoring_stays_inside_the_regression_budget` is the latency tripwire; see [bench.md](bench.md).
 
