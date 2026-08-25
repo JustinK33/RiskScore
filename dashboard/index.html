@@ -220,6 +220,51 @@
         </aside>
       </section>
 
+      <h2 class="section-heading" id="driftHeading">Drift</h2>
+      <p class="section-note">
+        Population stability index between the training partition and the test partition. The split
+        is chronological, so this measures how much the book moved over the year between them - and
+        a model whose score distribution has shifted is answering a different question than the one
+        it was measured on. Under 0.10 is stable, 0.10 to 0.25 is worth watching, above 0.25 calls
+        for a retrain.
+      </p>
+      <section class="panel-grid" aria-labelledby="driftHeading">
+        <figure class="panel chart-panel" aria-labelledby="scorePsiHeading">
+          <div class="panel-header">
+            <div>
+              <h2 id="scorePsiHeading">Score distribution</h2>
+              <p>
+                Bucketed by reference decile, so the reference bars are flat by construction and
+                every departure from flat belongs to the comparison partition.
+              </p>
+            </div>
+          </div>
+          <canvas id="scorePsiChart" role="img" aria-label="Score drift chart, loading"></canvas>
+          <figcaption id="scorePsiCaption" class="chart-caption"></figcaption>
+          <div id="scorePsiFallback"></div>
+        </figure>
+
+        <section class="panel table-panel" aria-labelledby="featurePsiHeading">
+          <div class="panel-header">
+            <div>
+              <h2 id="featurePsiHeading">Feature stability</h2>
+              <p>
+                Worst first. Watch the missing-rate columns as well as the index: a feature can hold
+                a PSI of 0.01 while its missing rate moves from 0.1% to 4%, which is a pipeline
+                change rather than population drift.
+              </p>
+            </div>
+          </div>
+          <div class="table-scroll" id="featurePsi"></div>
+        </section>
+
+        <aside class="panel side-panel" aria-labelledby="driftFactsHeading">
+          <h2 id="driftFactsHeading">Stability</h2>
+          <dl id="driftFacts"></dl>
+          <p class="hint" id="driftNote"></p>
+        </aside>
+      </section>
+
       <h2 class="section-heading" id="scoreHeading">Score an applicant</h2>
       <p class="section-note">
         Posts to <code>POST /predict</code> - the same endpoint and the same loaded bundle a

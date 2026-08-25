@@ -79,6 +79,7 @@ const PROBE = `(() => {
     flowChips: document.querySelectorAll("#rowFlow .chip").length,
     detailRows: document.querySelectorAll("#runDetails .def").length,
     embargoFacts: document.querySelectorAll("#embargoFacts .def").length,
+    featurePsiRows: document.querySelectorAll("#featurePsi tbody tr").length,
     artifacts: document.querySelectorAll("#artifactLinks a").length,
     tables: [...document.querySelectorAll(".data-fallback table")].map(
       (t) => t.querySelectorAll("tbody tr").length,
@@ -272,6 +273,9 @@ try {
       // Zero here means the manifest carried no embargo block, which would make the
       // chart beside it a claim with nothing behind it.
       if (report.embargoFacts !== 4) problems.push(`${report.embargoFacts} embargo facts, want 4`);
+      // One row is the "No rows." placeholder, so anything under two is an empty
+      // table wearing a header.
+      if (report.featurePsiRows < 2) problems.push("the feature PSI table is empty");
       if (report.tables.some((rows) => rows === 0)) problems.push("an empty fallback table");
       if (report.scoreFields < 4) problems.push(`${report.scoreFields} score fields, want the schema's`);
       if (report.scoreSelects < 1) problems.push("no categorical rendered as a select");
@@ -287,7 +291,7 @@ try {
         `${mark} ${theme.padEnd(5)} ${String(width).padStart(4)}px  ` +
           `scroll=${report.scrollWidth} bg=${report.background} ` +
           `canvas=${report.canvases.map((c) => c.cssWidth).join("/")} ` +
-          `tables=${report.tables.join("/")} ` +
+          `tables=${report.tables.join("/")} psi=${report.featurePsiRows}r ` +
           `score=${report.scoreFields}f/${report.scoreGroups}g/${report.scoreSelects}s ` +
           `verdict=${report.verdict || "none"}/${report.reasonRows}r ` +
           `banners=${report.banners.length}`,

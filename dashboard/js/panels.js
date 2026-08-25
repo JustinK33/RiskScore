@@ -34,7 +34,19 @@ import {
   prepareCanvas,
 } from "./charts.js";
 import { renderTable } from "./dom.js";
-import { count, isMissing, labelize, MISSING, number, percent, signed, toRows } from "./format.js";
+import {
+  count,
+  isMissing,
+  labelize,
+  MISSING,
+  number,
+  percent,
+  psiBand,
+  PSI_MODERATE,
+  PSI_SIGNIFICANT,
+  signed,
+  toRows,
+} from "./format.js";
 
 /** Shared prologue: size the canvas, read the theme, get a context. */
 function begin(canvas) {
@@ -520,4 +532,166 @@ export function drawVintages(canvas, payload) {
     : `Default rate for ${rows.length} vintage-partition groups; no AUC was recorded.`;
 
   return { label, table };
+}
+
+// --- drift ---------------------------------------------------------------------
+
+/** The bucket that holds rows with no score. Named by `risk_score.drift`. */
+const MISSING_BUCKET = "__missing__";
+
+/**
+ * Where the score distribution moved between two partitions.
+ *
+ * PSI compares shares, not counts, which is the only way the comparison means
+ * anything when the partitions are different sizes - train is 3,818 rows and test
+ * is 1,619. The buckets are *reference* deciles, so the reference series is 10% per
+ * bar by construction and every departure from flat belongs to the comparison. That
+ * is the whole reading of the chart, and it is why both series are drawn rather
+ * than only the difference.
+ *
+ * The x labels are decile numbers rather than score ranges. `[0.06699, 0.08301)` is
+ * 18 characters of monospace-width text and eleven of them do not fit in any plot
+ * this page has; the ranges are in the table underneath, where they can be read
+ * rather than squinted at.
+ */
+export function drawScorePsi(canvas, payload, { reference = "reference", comparison = "comparison" } = {}) {
+  const rows = toRows(payload?.score || {});
+  if (rows.length === 0) return nothing(canvas, "No score drift report for this run.");
+  const { ctx, width, height, colors } = begin(canvas);
+
+  const categories = rows.map((row, index) =>
+    row.bucket === MISSING_BUCKET ? "n/a" : String(index + 1),
+  );
+  const referenceShares = rows.map((row) => Number(row.reference_share));
+  const comparisonShares = rows.map((row) => Number(row.comparison_share));
+
+  const frame = drawFrame(ctx, {
+    width,
+    height,
+    x: ORDINAL_X,
+    y: {
+      ...niceTicks(0, Math.max(...referenceShares, ...comparisonShares, 0.1)),
+      format: (value) => percent(value, 0),
+    },
+    xTitle: `Score bucket (${reference} deciles)`,
+    yTitle: "Share of rows",
+    colors,
+  });
+  if (!frame) return { label: "Score drift chart, too small to draw.", table: null };
+
+  const { slot } = drawBars(ctx, frame, categories, [
+    { values: referenceShares, color: colors.series[1] },
+    { values: comparisonShares, color: colors.series[0] },
+  ]);
+  drawCategoryLabels(ctx, frame, categories, { colors, slot });
+  drawLegend(
+    ctx,
+    frame,
+    [
+      { label: `${labelize(reference)} (reference)`, color: colors.series[1] },
+      { label: labelize(comparison), color: colors.series[0] },
+    ],
+    { colors },
+  );
+
+  const table = renderTable(
+    [
+      { key: "bucket", label: "Score range" },
+      {
+        key: "reference_share",
+        label: `${labelize(reference)} share`,
+        align: "right",
+        format: (row) => percent(row.reference_share, 2),
+      },
+      {
+        key: "comparison_share",
+        label: `${labelize(comparison)} share`,
+        align: "right",
+        format: (row) => percent(row.comparison_share, 2),
+      },
+      {
+        key: "reference_count",
+        label: "Reference rows",
+        align: "right",
+        format: (row) => count(row.reference_count),
+      },
+      {
+        key: "comparison_count",
+        label: "Comparison rows",
+        align: "right",
+        format: (row) => count(row.comparison_count),
+      },
+      {
+        key: "psi_contribution",
+        label: "PSI contribution",
+        align: "right",
+        format: (row) => number(row.psi_contribution, 4),
+      },
+    ],
+    rows,
+    { caption: `Score distribution by ${reference} decile, against ${comparison}` },
+  );
+
+  // Summed from the payload rather than read from `/api/metrics`: the sum of the
+  // per-bucket contributions *is* the PSI, and a chart whose headline number came
+  // from a different endpoint could disagree with the bars beside it.
+  const total = rows.reduce((sum, row) => sum + (Number(row.psi_contribution) || 0), 0);
+  const worst = rows.reduce((most, row) =>
+    (Number(row.psi_contribution) || 0) > (Number(most.psi_contribution) || 0) ? row : most,
+  );
+  const label =
+    `Score distribution, ${reference} against ${comparison}. Population stability index ` +
+    `${number(total, 4)} (${psiBand(total).band}; ${PSI_MODERATE} is the usual watch line and ` +
+    `${PSI_SIGNIFICANT} the action line). The largest single bucket contributes ` +
+    `${number(worst.psi_contribution, 4)} at ${worst.bucket === MISSING_BUCKET ? "the missing-score bucket" : `range ${worst.bucket}`}.`;
+
+  return { label, table };
+}
+
+/**
+ * Per-feature PSI, worst first, as a real table rather than a chart.
+ *
+ * Twenty features against one number each is a ranked list, and a bar chart of it
+ * would be twenty labels rotated to fit with the actual values unreadable. The
+ * table shows the value, its band, and both missing rates - and the missing rates
+ * are the column that earns the table: a feature can hold a PSI of 0.01 while its
+ * missing rate goes from 0.1% to 4%, which is a pipeline change rather than
+ * population drift and would be invisible in the PSI alone.
+ */
+export function featurePsiTable(payload, { reference = "reference", comparison = "comparison" } = {}) {
+  const rows = toRows(payload?.features || {});
+  return renderTable(
+    [
+      { key: "feature", label: "Feature" },
+      { key: "kind", label: "Kind", format: (row) => labelize(row.kind) },
+      {
+        key: "psi",
+        label: "PSI",
+        align: "right",
+        format: (row) => number(row.psi, 4),
+        // Coloured from the band the API computed, not from a threshold repeated
+        // here, so the colour and the word can never disagree.
+        tone: (row) => psiBand(row.psi).tone,
+      },
+      { key: "band", label: "Band" },
+      {
+        key: "missing_rate_reference",
+        label: `Missing, ${reference}`,
+        align: "right",
+        format: (row) => percent(row.missing_rate_reference, 2),
+      },
+      {
+        key: "missing_rate_comparison",
+        label: `Missing, ${comparison}`,
+        align: "right",
+        format: (row) => percent(row.missing_rate_comparison, 2),
+      },
+      { key: "buckets", label: "Buckets", align: "right", format: (row) => count(row.buckets) },
+    ],
+    rows,
+    {
+      caption: `Population stability index per feature, ${reference} against ${comparison}, worst first`,
+      empty: "No per-feature drift report for this run.",
+    },
+  );
 }

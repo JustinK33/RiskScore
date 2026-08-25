@@ -460,6 +460,29 @@ main {
   grid-column: 1;
 }
 
+/* A panel whose content is a table rather than a canvas. Shares the chart column,
+   because a seven-column table needs the same width a chart does. */
+.table-panel {
+  grid-column: 1;
+}
+
+/*
+ * The scroll container for a table shown as a panel's own content.
+ *
+ * On the wrapper, not on the table: `.data-table` cells are `white-space: nowrap`,
+ * so a seven-column feature table is wider than a 320px viewport and would push the
+ * whole page sideways. Capping the height as well keeps a twenty-row table from
+ * burying the panels under it.
+ */
+.table-scroll {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.table-scroll > .data-table {
+  margin-top: 0;
+}
+
 .panel-header {
   display: flex;
   align-items: flex-start;

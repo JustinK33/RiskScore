@@ -21,6 +21,7 @@
 import {
   ApiError,
   getCalibration,
+  getDrift,
   getHealth,
   getMetrics,
   getModel,
@@ -41,8 +42,15 @@ import {
   setStatus,
   setText,
 } from "./dom.js";
-import { count, number, percent, shortRunId, timestamp } from "./format.js";
-import { drawCalibration, drawEmbargo, drawThresholdCosts, drawVintages } from "./panels.js";
+import { count, number, percent, psiBand, shortRunId, timestamp } from "./format.js";
+import {
+  drawCalibration,
+  drawEmbargo,
+  drawScorePsi,
+  drawThresholdCosts,
+  drawVintages,
+  featurePsiTable,
+} from "./panels.js";
 import { mountScorePanel } from "./score.js";
 
 /**
@@ -62,6 +70,7 @@ let state = {
   calibration: null,
   thresholdCosts: null,
   vintages: null,
+  drift: null,
   runs: [],
   problems: [],
 };
@@ -117,7 +126,7 @@ async function load(runId = null) {
 
   // `allSettled`, not `all`: a run predating a given report should show every
   // panel it can. The rejected ones are collected and named in the banner.
-  const [model, runs, manifest, metrics, calibration, thresholdCosts, vintages] =
+  const [model, runs, manifest, metrics, calibration, thresholdCosts, vintages, drift] =
     await Promise.allSettled([
       getModel(),
       getRuns(),
@@ -126,6 +135,7 @@ async function load(runId = null) {
       getCalibration(runId),
       getThresholdCosts(runId),
       getVintages(runId),
+      getDrift(runId),
     ]);
 
   // Unwrapped exactly once each, because `value` records a failure as a side
@@ -149,6 +159,7 @@ async function load(runId = null) {
     calibration: value(calibration, "calibration"),
     thresholdCosts: value(thresholdCosts, "threshold costs"),
     vintages: value(vintages, "vintages"),
+    drift: value(drift, "drift"),
     runs: history?.runs || [],
     problems,
   };
@@ -164,6 +175,7 @@ function render() {
   renderMetrics();
   renderRunDetails();
   renderEmbargoFacts();
+  renderDrift();
   renderArtifacts();
   renderSanity();
   redraw();
@@ -202,6 +214,25 @@ function redraw() {
   paint("#vintageChart", "#vintageCaption", "#vintageFallback", () =>
     drawVintages($("#vintageChart"), state.vintages),
   );
+  paint("#scorePsiChart", "#scorePsiCaption", "#scorePsiFallback", () =>
+    drawScorePsi($("#scorePsiChart"), state.drift, driftPartitions()),
+  );
+}
+
+/**
+ * Which two partitions the drift report compared.
+ *
+ * Named in `/api/metrics` rather than in `/api/drift`, so the chart is told rather
+ * than guessing. Defaulting to "reference" and "comparison" keeps the axis honest
+ * when metrics is the report that failed to load: a chart captioned "train against
+ * test" when nothing said so would be an invention.
+ */
+function driftPartitions() {
+  const metrics = state.metrics?.metrics || {};
+  return {
+    reference: metrics.drift_reference || "reference",
+    comparison: metrics.drift_comparison || "comparison",
+  };
 }
 
 function paint(canvasSelector, captionSelector, fallbackSelector, draw) {
@@ -376,6 +407,47 @@ function renderEmbargoFacts() {
   setText("#embargoSummary", embargo.summary || "");
 }
 
+/**
+ * The feature-stability table and the headline stability figures.
+ *
+ * `psi_features_unstable` is the list the pipeline itself flagged, and it is
+ * reported as a count with the names rather than as a colour on a table cell,
+ * because "two features are above the action line" is a sentence a reader can carry
+ * away from the page and an orange cell is not.
+ */
+function renderDrift() {
+  const node = $("#featurePsi");
+  const { reference, comparison } = driftPartitions();
+  if (node) {
+    replaceChildren(node, state.drift ? featurePsiTable(state.drift, { reference, comparison }) : []);
+  }
+
+  const metrics = state.metrics?.metrics || {};
+  const unstable = metrics.psi_features_unstable || [];
+  replaceChildren($("#driftFacts"), [
+    definition("Compared", `${reference} → ${comparison}`),
+    definition(
+      "Score PSI",
+      metrics.psi_score === undefined
+        ? null
+        : `${number(metrics.psi_score, 4)} (${metrics.psi_score_band || psiBand(metrics.psi_score).band})`,
+    ),
+    definition(
+      "Worst feature",
+      metrics.psi_feature_worst
+        ? `${metrics.psi_feature_worst} (${number(metrics.psi_feature_worst_value, 4)})`
+        : null,
+    ),
+    definition("Above the action line", count(unstable.length)),
+  ]);
+  setText(
+    "#driftNote",
+    unstable.length
+      ? `${unstable.join(", ")} moved enough to warrant a retrain before this model is relied on.`
+      : "No feature moved past 0.25 between the two partitions, so the population the model was fitted on is the population it was measured on.",
+  );
+}
+
 function renderArtifacts() {
   const node = $("#artifactLinks");
   if (!node) return;
@@ -512,7 +584,13 @@ async function boot() {
   // reflowing, and once when the layout first settles - which is the moment a
   // canvas finally has a width to be sized against.
   observeResize(
-    [$("#calibrationChart"), $("#thresholdChart"), $("#embargoChart"), $("#vintageChart")],
+    [
+      $("#calibrationChart"),
+      $("#thresholdChart"),
+      $("#embargoChart"),
+      $("#vintageChart"),
+      $("#scorePsiChart"),
+    ],
     redraw,
   );
 
