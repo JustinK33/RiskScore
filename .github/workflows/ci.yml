@@ -22,6 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Before the install, and with no dependency of its own, so a broken
+      # environment cannot be the reason the docs check was skipped.
+      - name: Per-file documentation coverage
+        run: python scripts/check_docs.py
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -33,7 +37,7 @@ jobs:
       - name: ruff format check
         run: ruff format --check .
       - name: mypy strict
-        run: mypy src tests
+        run: mypy src tests scripts
 
   test:
     name: Tests (py${{ matrix.python-version }})

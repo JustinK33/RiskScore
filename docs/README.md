@@ -45,8 +45,11 @@ See [decisions/0003-train-validation-test-split.md](decisions/0003-train-validat
 
 ## Documentation scope
 
-`docs/code/` covers every file that contains executable logic: `src/risk_score/**/*.py`, `dashboard/*.{html,css,js}`, and `tests/conftest.py`.
+`docs/code/` covers every file that contains executable logic: `src/risk_score/*.py`, `src/risk_score/api/*.py`, `dashboard/index.html`, `dashboard/styles/*.css`, `dashboard/js/*.js`, `tests/conftest.py`, and both files in `scripts/`.
 Configuration files, `.gitignore`, and top-level READMEs are intentionally out of scope - they are either self-describing or documented where they are used.
+The `*.test.js` files have no page of their own; each module's page names its tests.
+The two `__init__.py` files are exempt with a stated reason.
 
-`scripts/check_docs.py` enforces this in CI: every in-scope code file must have a page, and every page must carry all required headings.
+[`scripts/check_docs.py`](code/check_docs.md) enforces this in CI: every in-scope code file must have a page, every page must correspond to a file that still exists, every page must carry all seven headings, and every page must be linked from the index.
+It is in scope itself, because a rule that exempts its own enforcement is a rule with a hole in it.
 Documentation that can rot silently does.

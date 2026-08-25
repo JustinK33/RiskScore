@@ -109,6 +109,7 @@ The `*.test.js` files have no pages of their own; each module's page names its t
 | `src/risk_score/sample_data.py` | [sample_data.md](sample_data.md) | Synthetic raw-format extract that reproduces survivorship bias by the real mechanism. |
 | `tests/conftest.py` | [conftest.md](conftest.md) | The shared fixtures. One real bundle fitted once, and no test reads the environment. |
 | `scripts/probe_dashboard.mjs` | [probe_dashboard.md](probe_dashboard.md) | The dashboard measured in real Chrome at six widths in two themes, with the offender named. |
+| `scripts/check_docs.py` | [check_docs.md](check_docs.md) | The enforcement for this directory. In scope itself, because a rule that exempts its own checker has a hole in it. |
 
 ## Reading the audit IDs
 
