@@ -407,7 +407,12 @@ def build_preprocessor(
         transformers.append(("missingness", missingness, list(spec.numeric_features)))
     if spec.categorical_features:
         transformers.append(("categorical", categorical, list(spec.categorical_features)))
-    if not transformers:
+    # Unreachable through the public constructor: `FeatureSpec.__post_init__`
+    # already rejects a spec with both feature lists empty, and that is where the
+    # test asserts it. Kept as defence in depth because the cost of the guard being
+    # wrong is a `ColumnTransformer` that fits happily and produces zero columns -
+    # a model trained on nothing, which fails much later and much less clearly.
+    if not transformers:  # pragma: no cover - FeatureSpec rejects this first
         raise ValueError(f"FeatureSpec declares no columns to transform: {spec.summary()}.")
 
     return ColumnTransformer(

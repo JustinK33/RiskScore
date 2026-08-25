@@ -25,6 +25,8 @@ from risk_score.modeling import (
     TimeWindow,
     build_model_pipeline,
     build_preprocessor,
+    categorical_choices,
+    engineering_prefix,
     fit_with_validation_monitoring,
     split_by_time,
     train_logistic_regression,
@@ -113,6 +115,25 @@ def test_a_window_ending_before_it_starts_is_rejected() -> None:
 def test_a_window_needs_exactly_two_bounds() -> None:
     with pytest.raises(ValueError, match="exactly \\(start, end\\)"):
         TimeWindow.parse("train", ("2013-01", "2014-01", "2015-01"))
+
+
+def test_parsing_an_already_parsed_window_is_the_identity() -> None:
+    """`TimeWindow.parse` accepts its own output, unchanged.
+
+    It matters because the config layer calls it on whatever the caller supplied,
+    and a `TimeWindow` reaching it a second time must not have its end expanded
+    again: `_end_of_period` on a Timestamp is a pass-through precisely so that
+    2014-09-30 does not become 2014-09-30 23:59:59.999999999 on the second trip.
+    """
+    once = TimeWindow.parse("train", ("2013-01", "2014-09"))
+    twice = TimeWindow.parse("train", once)
+
+    assert (twice.start, twice.end) == (once.start, once.end)
+    assert twice.name == "train"
+
+    # The same pass-through, reached through the tuple form with real Timestamps.
+    stamped = TimeWindow.parse("train", (pd.Timestamp("2013-01-15"), pd.Timestamp("2014-09-20")))
+    assert stamped.label() == "2013-01-15..2014-09-20"
 
 
 def test_a_window_never_contains_a_missing_date() -> None:
@@ -499,6 +520,58 @@ def test_a_spec_with_only_categoricals_still_builds_a_preprocessor() -> None:
         categorical_features=("purpose",),
     )
     assert [name for name, _, _ in build_preprocessor(spec).transformers] == ["categorical"]
+
+
+def test_a_spec_declaring_no_features_cannot_be_constructed() -> None:
+    """An empty spec is a configuration mistake, not an empty matrix.
+
+    Asserted at the constructor rather than at `build_preprocessor`, because that
+    is where it is actually caught - which is the reason the same guard inside
+    `build_preprocessor` is marked unreachable. `ColumnTransformer` with no
+    transformers fits happily and produces zero columns, so without either guard
+    the failure surfaces as an unintelligible sklearn error inside `fit`, or as a
+    model trained on nothing at all.
+    """
+    with pytest.raises(ValueError, match="declares no model features"):
+        FeatureSpec(
+            raw_inputs=(),
+            required_raw_inputs=(),
+            engineered=(),
+            numeric_features=(),
+            categorical_features=(),
+        )
+
+
+def test_categorical_choices_is_empty_rather_than_raising_without_a_categorical_branch() -> None:
+    """Two shapes of pipeline that legitimately have no categories to report.
+
+    `/api/schema` calls this on whatever bundle is loaded, so an empty mapping is
+    the answer for a numeric-only spec. Raising would take the route down over a
+    model that is working correctly.
+    """
+    assert categorical_choices(Pipeline(steps=[("model", FunctionTransformer())])) == {}
+
+    numeric_only = FeatureSpec(
+        raw_inputs=("loan_amnt",),
+        required_raw_inputs=(),
+        engineered=(),
+        numeric_features=("loan_amnt",),
+        categorical_features=(),
+    )
+    frame = pd.DataFrame({"loan_amnt": [1000.0, 2000.0]})
+    fitted = build_preprocessor(numeric_only).fit(frame)
+    assert categorical_choices(Pipeline(steps=[("preprocess", fitted)])) == {}
+
+
+def test_engineering_prefix_rejects_a_pipeline_with_no_engineer_step() -> None:
+    """The name-based slice fails loudly rather than returning a wrong prefix.
+
+    Reason codes and the drift tables both read the engineered frame from here, so
+    silently handing back an un-engineered one would make the derived features look
+    absent from the model rather than absent from the slice.
+    """
+    with pytest.raises(ValueError, match="expected an `engineer` step"):
+        engineering_prefix(Pipeline(steps=[("model", FunctionTransformer())]))
 
 
 # --- the assembled pipeline ----------------------------------------------------
