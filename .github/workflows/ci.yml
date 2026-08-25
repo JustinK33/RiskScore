@@ -64,11 +64,11 @@ jobs:
         run: python -c "import xgboost; print(xgboost.__version__)"
       # The floor is a ratchet: it sits just under the measured total and is
       # raised, never lowered, as phases land. A drop below it fails the build.
-      # Measured 96% locally with the three xgboost tests skipped, so the slack
+      # Measured 97% locally with the three xgboost tests skipped, so the slack
       # is for line-count churn rather than for the skips - this job installs
       # libgomp1 above and therefore runs strictly more code than that reading.
       - name: pytest
-        run: pytest -q --cov --cov-report=term-missing --cov-fail-under=94
+        run: pytest -q --cov --cov-report=term-missing --cov-fail-under=95
 
   dashboard:
     name: Dashboard helpers
