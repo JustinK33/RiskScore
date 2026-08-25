@@ -83,7 +83,7 @@ jobs:
         run: node --test
 
   smoke:
-    name: End-to-end on synthetic data
+    name: End-to-end on synthetic data, and the image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -105,6 +105,46 @@ jobs:
       # step below has something to upload when a check fails.
       - name: make-sample-data, compare, activate, card, serve, predict
         run: python scripts/smoke_e2e.py --workdir "${RUNNER_TEMP}/smoke"
+
+      # The image is checked here rather than in a job of its own because a
+      # serving container needs a bundle, and this is the job that just made one.
+      # A separate job would either repeat the fit or pass a pickle between jobs
+      # as an artifact.
+      #
+      # This is also the ONLY place the image is ever built: Docker is not
+      # available on the machine this was written on, so an unverified Dockerfile
+      # would be a file that looks like a deployment story and is not one.
+      - name: Build the serving image
+        run: docker build -t riskscore:ci .
+
+      - name: Serve the smoke run from the container
+        run: |
+          set -euo pipefail
+          # Read-only mount: a scoring service writes nothing, and :ro is how that
+          # claim gets tested rather than asserted.
+          docker run -d --name riskscore-ci -p 8000:8000 \
+            -v "${RUNNER_TEMP}/smoke/reports:/app/reports:ro" riskscore:ci
+          # Waits on the image's own HEALTHCHECK, which parses /readyz for
+          # `bundle_loaded` - so this loop verifies the health probe as well as
+          # the boot. `starting` means keep waiting; anything else is terminal.
+          for _ in $(seq 45); do
+            state="$(docker inspect -f '{{.State.Health.Status}}' riskscore-ci)"
+            [ "$state" = "starting" ] || break
+            sleep 2
+          done
+          docker logs riskscore-ci
+          test "$state" = "healthy"
+
+      # The same assertions the local process passed, against the container:
+      # /predict, the reason-code sum, both 422 shapes, the batch, every
+      # allowlisted artifact, the pickle 404, and the dashboard's own files.
+      - name: The service checks, against the container
+        run: python scripts/smoke_e2e.py --against http://127.0.0.1:8000
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f riskscore-ci || true
+
       - name: Upload the run tree on failure
         if: failure()
         uses: actions/upload-artifact@v4

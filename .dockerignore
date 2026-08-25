@@ -1,0 +1,53 @@
+# The build context is uploaded to the daemon before the first instruction runs,
+# so this file is a build-time cost as much as an image-size one. Unignored,
+# `data/` alone is 1.19 GB of Lending Club extract that no stage copies.
+#
+# The Dockerfile COPYs exactly four things - requirements-serve.txt,
+# pyproject.toml, README.md, src/, dashboard/ - so everything else here is
+# strictly about not sending it in the first place.
+
+# Data and generated output. A bundle is a mount, never a layer.
+data/
+reports/
+*.csv
+*.parquet
+*.joblib
+
+# Version control and CI. `.git` is ~1.5 MB, most of it one gif.
+.git/
+.github/
+.gitignore
+
+# Local environments and caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Not shipped: the image serves, it does not test or explain itself.
+tests/
+notebooks/
+docs/
+scripts/
+configs/
+*.gif
+
+# Dashboard test files are the one exception inside a directory that IS copied.
+# They are the only thing in dashboard/ the browser never requests.
+dashboard/js/*.test.js
+dashboard/package.json
+
+# Never. A secret in a build context ends up in the image history whether or not
+# an instruction copies it.
+.env
+.env.*
+
+# Editor and OS noise.
+.DS_Store
+.idea/
+.vscode/

@@ -26,6 +26,7 @@ A script. Its four module constants are the specification and are meant to be re
 
 ```
 python scripts/smoke_e2e.py [--workdir DIR] [--rows N]
+python scripts/smoke_e2e.py --against http://127.0.0.1:8000
 ```
 
 | Name | What it is |
@@ -37,6 +38,8 @@ python scripts/smoke_e2e.py [--workdir DIR] [--rows N]
 | `check(condition, message)` | Record a failure without stopping; return whether it passed. |
 
 `--workdir` keeps the tree instead of using a tempdir it deletes, which is what CI passes so a failed run has something to upload. `--rows` defaults to 4000.
+
+`--against URL` trains nothing and publishes nothing: it runs only the service checks, against a service this script did not start. That is how the container is checked, using the tree the full pass just published - so the image gets `/predict`, the reason-code sum, both 422 shapes, the batch, every allowlisted artifact, the pickle 404, and the dashboard's own files, rather than a `curl /readyz` and a shrug. The run id is read from `/api/model` instead of being asserted against a known one, which makes "is it serving the run I activated?" the single check this mode gives up.
 
 Exits `0` with `end-to-end smoke clean`, or `1` with one `FAIL` line per problem.
 

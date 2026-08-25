@@ -120,6 +120,48 @@ riskscore serve
 `Settings` is constructed before uvicorn is imported, so a refused combination exits 3 with a readable message and never opens a socket.
 Enabling a mutating route on a non-loopback bind with no key is one of the combinations it refuses.
 
+### In a container
+
+```bash
+docker build -t riskscore .
+docker run --rm -p 8000:8000 -v "$PWD/reports:/app/reports:ro" riskscore
+```
+
+The image serves and does nothing else.
+It installs the `[serve]` extra from `requirements-serve.txt`, which pins exact versions so two builds of one commit are the same artifact - `pyproject.toml` keeps floors, because a library that pins is a library nobody can install alongside anything.
+Regenerate the pins with the recipe in the file's own header after changing the extra.
+
+**The reports tree is a mount, not a layer.**
+A model bundle is generated output that changes every retrain; baking one in would make the image the thing you rebuild to roll a model back, and `riskscore activate` is that thing.
+Read-only is correct: a scoring service writes nothing.
+
+Four defaults are inverted inside the image, and the reasons matter:
+
+| Setting | In the image | Why |
+| --- | --- | --- |
+| `RISKSCORE_HOST` | `0.0.0.0` + `ALLOW_PUBLIC_BIND=1` | A container that binds loopback is a container nothing can reach. Safe here only because the mutating routes stay off. |
+| `RISKSCORE_REQUIRE_BUNDLE` | `1` | A fresh clone should boot and be told to train. A container that cannot score should fail its health check and be replaced, not answer `/healthz` while every `/predict` returns 503. |
+| `RISKSCORE_LOG_JSON` | `1` | The audience is a log aggregator, not a terminal. |
+| `RISKSCORE_ALLOWED_HOSTS` | unchanged | Left at `localhost,127.0.0.1` so `docker run -p 8000:8000` works from a browser. **Behind a proxy or a real hostname, set it to that hostname** - the `Host` allow-list is what stops DNS rebinding, and `*` gives it up. |
+
+The `HEALTHCHECK` polls `/readyz` and parses the body for `bundle_loaded` rather than trusting a 200, because a process serving no bundle is alive and useless.
+It runs `python`, not `curl`, so the image needs no extra package, and it reads `RISKSCORE_PORT` itself so overriding the port does not silently break the check.
+
+```bash
+docker inspect -f '{{.State.Health.Status}}' <container>
+```
+
+**The image cannot serve an XGBoost bundle.**
+Unpickling one imports xgboost, which is the `[train]` extra and is not installed - stated plainly because the failure is a `ModuleNotFoundError` at startup, not a wrong answer.
+Serving a compared XGBoost run means adding `xgboost` to `requirements-serve.txt` and `libgomp1` to an `apt-get` line in the runtime stage, at roughly double the image size.
+The default bundle is logistic regression.
+
+It runs as uid 10001, so a bind-mounted `reports/` has to be world-readable - which it is by default, since the pipeline writes 0644 files.
+A Docker *named* volume works because the Dockerfile chowns `/app/reports` before the volume covers it; a volume inheriting root ownership is otherwise the first thing that goes wrong.
+
+The image is built and exercised in CI, in the same job that publishes a synthetic run: it starts the container against that tree, waits on the image's own health check, and then runs `scripts/smoke_e2e.py --against` so the container faces the same assertions the local process does.
+That is the only place it is built - see [code/smoke_e2e.md](code/smoke_e2e.md).
+
 ## Is it healthy
 
 | Probe | Means | On a missing bundle |
@@ -284,9 +326,18 @@ If the numbers regressed, the thing to suspect is a transformer, not the estimat
 ## Verifying a change
 
 ```bash
-ruff format --check . && ruff check . && mypy src tests && pytest -q
+ruff format --check . && ruff check . && mypy src tests scripts && pytest -q
+python scripts/check_docs.py                     # every code file has a page, every page has all seven headings
+(cd dashboard && node --test)                    # the JS helpers
+python scripts/smoke_e2e.py                      # the whole path on synthetic data, ~1 minute
 ```
 
-That is the gate every commit passes.
+The first two lines are the gate every commit passes.
+The last two are what CI adds, and both run locally with no arguments.
+
 `pytest -m slow` additionally runs the latency guard, which is excluded from the default run because a percentile measured on a loaded machine is flaky by construction.
 XGBoost tests skip rather than fail when OpenMP is absent, which is why the Linux CI job is the one that proves those paths work.
+
+Two checks need something this repository cannot assume.
+`node scripts/probe_dashboard.mjs http://127.0.0.1:8000` measures layout at six widths in two themes and needs Chrome, so it is run by hand - see [code/probe_dashboard.md](code/probe_dashboard.md).
+The image build needs Docker and only ever runs in CI.

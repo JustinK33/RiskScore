@@ -24,6 +24,11 @@ Runs in CI on every push, and locally in about a minute:
 
 Exits 0 when every check passes, 1 with the failures listed. Leaves the work
 directory behind when given one, so a failure can be inspected.
+
+``--against URL`` skips the pipeline and runs only the service checks against a
+service this script did not start. That is how the container is checked: the
+image gets the same assertions as the local process, using the run tree the full
+pass above just published.
 """
 
 from __future__ import annotations
@@ -110,6 +115,11 @@ APPLICANT = {
 
 HOST = "127.0.0.1"
 PORT = 8399
+
+#: Rebound by ``--against`` so every service check can run against a URL this
+#: script did not start - the container, in CI. Module-level rather than threaded
+#: through :func:`get` and :func:`post` because there is exactly one service per
+#: invocation and a parameter on every call site would say otherwise.
 BASE = f"http://{HOST}:{PORT}"
 
 problems: list[str] = []
@@ -203,12 +213,26 @@ def wait_for_ready(process: subprocess.Popen[bytes], log: Path, deadline: float 
 
 
 def main() -> int:
+    global BASE
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workdir", type=Path, help="keep the run tree here instead of a tempdir")
     # 4000 rows is the floor that still leaves positives in all three partitions
     # after the embargo, at roughly half the wall time of the 8000-row default.
     parser.add_argument("--rows", type=int, default=4000, help="synthetic loans (default: 4000)")
+    parser.add_argument(
+        "--against",
+        metavar="URL",
+        help=(
+            "run only the service checks, against a service this script did not "
+            "start (the container, in CI). Trains nothing and publishes nothing."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.against:
+        BASE = args.against.rstrip("/")
+        return check_running_service()
 
     keep = args.workdir is not None
     workdir = args.workdir or Path(tempfile.mkdtemp(prefix="riskscore-smoke-"))
@@ -325,6 +349,32 @@ def smoke(workdir: Path, reports: Path, dataset: Path, rows: int) -> int:
             service.kill()
             problems.append("the service did not exit on SIGTERM")
 
+    return report()
+
+
+def check_running_service() -> int:
+    """Run every service check against a service somebody else started.
+
+    Exists so the container gets the same assertions as the local process rather
+    than a `curl /readyz` and a shrug. The image can fail in ways the runner
+    cannot - a dependency missing from the pinned closure, a mount the non-root
+    user cannot read, a bundle that unpickles only because the training extra
+    happened to be installed - and all of those surface as one of the checks
+    below rather than as a health probe that eventually goes green.
+
+    The run id is read from the service instead of being asserted against a known
+    one, so the "is it serving the run I activated?" check is vacuous here. That
+    is the one thing this mode gives up.
+    """
+    status, model = get("/api/model")
+    if not check(status == 200, f"GET /api/model answered {status} at {BASE}"):
+        return report()
+    if not check(isinstance(model, dict), "GET /api/model is not an object"):
+        return report()
+    assert isinstance(model, dict)
+    run_id = str(model.get("run_id"))
+    print(f"checking {BASE}, serving {run_id}")
+    check_service(run_id)
     return report()
 
 

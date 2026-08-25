@@ -1,0 +1,57 @@
+# Pinned dependency closure for the container image, and for nothing else.
+#
+# `pyproject.toml` keeps floors (`fastapi>=0.115`) because a library that pins
+# exact versions is a library nobody can install alongside anything. An image is
+# the opposite problem: two builds of the same commit that install different
+# versions are two different artifacts with one tag, and the difference only
+# shows up in production.
+#
+# So the Dockerfile installs this file first and then the project with
+# `--no-deps`. Nothing in CI, the test suite, or a local `pip install -e .`
+# reads it.
+#
+# Regenerate after changing the `[serve]` extra:
+#
+#     python3 -m venv /tmp/lockenv
+#     /tmp/lockenv/bin/pip install ".[serve]"
+#     /tmp/lockenv/bin/pip freeze | grep -v credit-default-risk-score | sort -f
+#
+# ponytail: versions only, no hashes. `--require-hashes` is the real supply-chain
+# answer and needs pip-tools or `uv` to generate; add it when this image is
+# published somewhere that matters rather than built from source by whoever runs
+# it. Version pins already close the "two builds, two artifacts" gap, which is
+# the one that bites during a demo.
+#
+# Not here, deliberately: xgboost, matplotlib, pyarrow. Those are the `[train]`
+# extra and the image only serves - see the note in the Dockerfile about what
+# that costs.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+click==8.4.2
+fastapi==0.141.1
+h11==0.16.0
+httptools==0.8.0
+idna==3.19
+joblib==1.5.3
+narwhals==2.25.0
+numpy==2.5.2
+pandas==3.0.5
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pydantic_core==2.46.4
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+PyYAML==6.0.3
+scikit-learn==1.9.0
+scipy==1.18.1
+six==1.17.0
+starlette==1.6.0
+threadpoolctl==3.6.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.0.1
