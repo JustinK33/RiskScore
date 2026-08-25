@@ -167,6 +167,45 @@ const SCORE = `(async () => {
   return "no verdict rendered within 10s";
 })()`;
 
+/**
+ * Switch to a past run the way a reader does: pick another option, wait for the
+ * page to settle. Returns "" on success or the reason it failed.
+ *
+ * The picker is the whole run-history feature, and nothing else proves it works.
+ * Its options come from `/api/runs` while every panel below reads
+ * `/api/<report>?run_id=...`, so a run present in the registry whose reports are
+ * missing, pruned, or named differently produces a page of dashes and an amber
+ * pill - and that is indistinguishable from a fresh load in a screenshot.
+ *
+ * A one-run tree is the ordinary state and not a failure, so it passes.
+ */
+const SWITCH = `(async () => {
+  const select = document.querySelector("#runSelect");
+  if (!select) return "the run picker is absent";
+  if (select.options.length < 2) return "";
+  const labels = new Set([...select.options].map((option) => option.textContent));
+  // Two options spelled the same way are two options a reader cannot choose
+  // between, which is what happens when the label omits whatever actually differs
+  // between them - the compare runs differ only by tier and share a minute.
+  if (labels.size !== select.options.length) {
+    return "the run picker has duplicate labels: " + [...labels].join(" | ");
+  }
+  const before = document.querySelector("#identityGrid .def dd")?.textContent || "";
+  const next = [...select.options].find((option) => option.value !== select.value);
+  select.value = next.value;
+  select.dispatchEvent(new Event("change"));
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const status = document.querySelector("#status");
+    const shown = document.querySelector("#identityGrid .def dd")?.textContent || "";
+    if (status?.dataset.state !== "loading" && shown !== before) {
+      if (status.dataset.state === "error") return "switching runs: " + status.textContent;
+      return shown === next.value ? "" : "the picker loaded " + shown + ", not " + next.value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return "the run picker never loaded another run within 10s";
+})()`;
+
 /** One CDP session against a fresh tab. */
 async function session(width, height, theme) {
   const target = await fetch(`http://127.0.0.1:${PORT}/json/new?about:blank`, {
@@ -244,13 +283,22 @@ async function session(width, height, theme) {
   const after = await send("Runtime.evaluate", { expression: PROBE, returnByValue: true });
   result = JSON.parse(after.result.result.value);
 
+  // Last, because it replaces every panel's data: the measurements above describe
+  // the run the page opened with, which is the one the screenshots are taken of.
+  const switched = await send("Runtime.evaluate", {
+    expression: SWITCH,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  const switchError = switched.result?.result?.value ?? "the run-switch probe did not return";
+
   const consoleErrors = events
     .filter((event) => event.method === "Log.entryAdded" && event.params.entry.level === "error")
     .map((event) => event.params.entry.text);
 
   socket.close();
   await fetch(`http://127.0.0.1:${PORT}/json/close/${target.id}`);
-  return { ...result, scoreError, consoleErrors };
+  return { ...result, scoreError, switchError, consoleErrors };
 }
 
 const chrome = spawn(
@@ -334,6 +382,7 @@ try {
       if (report.scoreFields < 4) problems.push(`${report.scoreFields} score fields, want the schema's`);
       if (report.scoreSelects < 1) problems.push("no categorical rendered as a select");
       if (report.scoreError) problems.push(report.scoreError);
+      if (report.switchError) problems.push(report.switchError);
       if (!report.verdict) problems.push("no decision in the verdict block");
       if (report.reasonRows === 0) problems.push("a verdict with no reason codes");
       if (report.narrowBars) problems.push(`${report.narrowBars} reason bar(s) render at zero width`);

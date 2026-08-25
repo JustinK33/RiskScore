@@ -295,9 +295,14 @@ function renderRunPicker() {
       el("option", {
         value: run.run_id,
         selected: run.run_id === state.runId,
+        // The tier and not just the model type: `riskscore compare` publishes every
+        // variant within the same second, and `shortRunId` keeps the stamp only to
+        // the minute, so two runs that differ solely by tier produced two options
+        // spelled identically and picking between them was a coin flip.
+        //
         // The active run is marked, because "which one is serving /predict" is a
         // different question from "which one am I looking at".
-        textContent: `${shortRunId(run.run_id)} · ${run.model_type}${
+        textContent: `${shortRunId(run.run_id)} · ${variantName(run)}${
           run.run_id === state.activeRunId ? " · active" : ""
         }`,
       }),
