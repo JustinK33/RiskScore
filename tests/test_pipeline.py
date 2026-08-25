@@ -44,7 +44,7 @@ from risk_score.evaluation import (
     select_threshold_by_cost,
 )
 from risk_score.modeling import TimeSplit, split_by_time
-from risk_score.pipeline import RunResult, train_run
+from risk_score.pipeline import RunResult, compare_runs, train_run
 
 # The synthetic extract is issued across 2013-01..2016-12, but the maturity
 # embargo removes every vintage too young to have finished paying by the
@@ -633,4 +633,39 @@ def test_an_unsupported_model_type_is_rejected_before_any_work(
         run(raw_csv, output_dir, model_type="random_forest")
     # Rejected before the run created anything, so a bad argument leaves no
     # half-populated report tree behind.
+    assert not output_dir.exists()
+
+
+def test_compare_checks_every_model_before_publishing_any_run(
+    raw_csv: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unloadable wheel in variant 3 must not leave variants 1 and 2 published.
+
+    Reproduces the real failure, which was found by running `compare` on the
+    1.19 GB extract on a machine without libomp: it read the file, fitted and
+    published two logistic-regression runs, and *then* died importing XGBoost -
+    before `comparison.json` was written. So the registry gained two runs that
+    the comparison document said nothing about, twenty-five seconds after the
+    environment problem was already knowable.
+
+    The import is monkeypatched rather than skipped on the real one, because the
+    bug is about *when* the check happens and that has to be testable on a
+    machine where XGBoost loads fine.
+    """
+    monkeypatch.setattr(
+        "risk_score.modeling._import_xgboost_classifier",
+        lambda: (_ for _ in ()).throw(ImportError("brew install libomp")),
+    )
+    output_dir = tmp_path / "reports"
+
+    with pytest.raises(ImportError, match="libomp"):
+        compare_runs(
+            raw_csv,
+            models=("logistic_regression", "xgboost"),
+            config=RunConfig(split=SPLIT),
+            output_dir=output_dir,
+        )
+
+    # Nothing at all: no runs, no registry, no comparison.json. The whole point
+    # of preflighting is that the failure costs one import and not two fits.
     assert not output_dir.exists()

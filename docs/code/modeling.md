@@ -51,6 +51,7 @@ The two decisions behind this file are recorded separately: [0002 - feature engi
 | `fit_with_validation_monitoring(spec, estimator, x_train, y_train, x_validation, y_validation, ...)` | Fit an estimator that watches validation, and return one `Pipeline`. |
 | `train_xgboost_model(x_train, y_train, *, spec, x_validation=None, y_validation=None, ...)` | Fit the boosted model, with early stopping when validation is supplied. |
 | `train_model(model_type, split, *, spec, config, ...)` | Dispatch: give each model type what it may legitimately use. |
+| `ensure_model_available(model_type)` | Raise now if this model cannot be fitted here - an unsupported name, or an XGBoost wheel that will not load. |
 | `SUPPORTED_MODEL_TYPES` | The valid `model_type` values, as names rather than functions, so a caller can validate before doing work. |
 | `DEFAULT_LOGISTIC_PARAMS`, `DEFAULT_XGBOOST_PARAMS`, `DEFAULT_MIN_CATEGORY_FREQUENCY`, `DEFAULT_EARLY_STOPPING_ROUNDS` | The tested defaults, each with its provenance in a comment. |
 
@@ -156,6 +157,16 @@ Catching only `ImportError` let that reach the terminal unedited.
 The same distinction bites in tests: `pytest.importorskip("xgboost")` does not catch `XGBoostError`, so a test using it *fails* on a machine without OpenMP instead of skipping.
 `tests/conftest.py` provides a `requires_xgboost` marker that tries the import and checks the result.
 
+### `ensure_model_available` exists because *when* the check happens matters
+
+The rewritten message above was still delivered at the wrong moment.
+Running `riskscore compare` on the 1.19 GB extract on a machine without `libomp` read the file, fitted and published two logistic-regression runs, and only then died importing XGBoost for variant 3 of 4 - twenty-five seconds after the environment problem was already knowable, and *before* `comparison.json` was written.
+So the registry gained two runs that the comparison document said nothing about, which renders on the dashboard as "nothing has been compared" on a tree where something was.
+
+`ensure_model_available` performs the same import without fitting, so it cannot pass here and fail in the trainer.
+`train_run` calls it in place of its old name-only check, and `compare_runs` calls it for every requested model before the first read, because an all-or-nothing command has to know up front.
+It costs one already-cached import when the wheel loads, and nothing at all for logistic regression.
+
 ### Preprocessor details that are decisions, not defaults
 
 - `SimpleImputer(strategy="median", keep_empty_features=True)`, with **no** `add_indicator`. `keep_empty_features` because otherwise a column entirely missing in train is silently dropped and the design matrix is narrower than the spec declares, which surfaces only at serving time as a width mismatch with no column name in the message.
@@ -184,6 +195,9 @@ Named audit regressions: `test_b05_the_logistic_baseline_is_not_class_weighted`,
 The two B33 tests are worth reading together, because the bug was only visible from the serving end: the first fits on a frame with exactly *one* gap - which is what makes the indicator's standard deviation tiny - and then transforms a row that omits the field, and the second pins the indicator block to the spec rather than to the training data's gaps.
 
 Audit B28 - re-parsing dates under a second policy - is covered by `test_an_unparsed_date_column_is_refused_rather_than_reparsed_here`.
+
+The preflight's own regression test lives with the caller it protects: `tests/test_pipeline.py::test_compare_checks_every_model_before_publishing_any_run` monkeypatches the import to fail and asserts the report tree is never created.
+Monkeypatched rather than skipped on the real wheel, because the bug is about *when* the check runs and that has to be testable on a machine where XGBoost loads fine.
 
 The validation-monitoring tests are the ones to read first, because they verify an assembly this project invented rather than a library behaviour:
 

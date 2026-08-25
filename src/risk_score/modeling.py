@@ -569,6 +569,54 @@ def fit_with_validation_monitoring(
     return Pipeline(steps=[*preprocessing.steps, steps[-1]])
 
 
+def _import_xgboost_classifier() -> type[Any]:
+    """Import ``XGBClassifier``, or raise something a person can act on.
+
+    Not just ``ImportError``. An installed-but-unloadable wheel raises
+    ``XGBoostError`` from inside the import - a forty-line dlopen dump whose
+    actual instruction, ``brew install libomp``, is buried in the middle of it.
+    Catching only ``ImportError`` let that reach the terminal unedited.
+    """
+    try:
+        from xgboost import XGBClassifier
+    except Exception as exc:  # pragma: no cover - depends on the local libomp
+        raise ImportError(
+            f"XGBoost is installed but could not be loaded: {type(exc).__name__}. "
+            f"On macOS the wheel needs the OpenMP runtime: brew install libomp. "
+            f"Otherwise install the train extra: pip install -e '.[train]'."
+        ) from exc
+    return XGBClassifier
+
+
+def ensure_model_available(model_type: str) -> None:
+    """Raise now if ``model_type`` cannot be fitted on this machine.
+
+    Two failures, and the second is the reason this exists as its own function
+    rather than living inside the trainer.
+
+    An unsupported *name* is a typo, and catching it before anything is created
+    means a mistyped model leaves no half-written run directory behind.
+
+    An unloadable *wheel* is an environment problem, and it used to be discovered
+    at the moment of the fit. ``riskscore compare`` therefore read the 1.19 GB
+    extract, fitted and published two logistic-regression runs, and only then
+    died on variant 3 of 4 - twenty-five seconds in, with two runs in the registry
+    and no ``comparison.json`` written, so the dashboard reported nothing about
+    the runs it had just gained. Every requested model is checked up front
+    instead.
+
+    The check is the same import the trainer performs, so it cannot pass here and
+    fail there. It costs nothing when the wheel loads and nothing at all for
+    logistic regression.
+    """
+    if model_type not in SUPPORTED_MODEL_TYPES:
+        raise ValueError(
+            f"Supported model types are {list(SUPPORTED_MODEL_TYPES)}; got {model_type!r}."
+        )
+    if model_type == "xgboost":
+        _import_xgboost_classifier()
+
+
 def train_xgboost_model(
     x_train: pd.DataFrame,
     y_train: pd.Series,
@@ -587,18 +635,7 @@ def train_xgboost_model(
     when the validation metric stops improving and ``predict_proba`` uses the
     best iteration rather than the last.
     """
-    try:
-        from xgboost import XGBClassifier
-    except Exception as exc:  # pragma: no cover - depends on the local libomp
-        # Not just ImportError. An installed-but-unloadable wheel raises
-        # XGBoostError from inside the import - a forty-line dlopen dump whose
-        # actual instruction, `brew install libomp`, is buried in the middle of
-        # it. Catching only ImportError let that reach the terminal unedited.
-        raise ImportError(
-            f"XGBoost is installed but could not be loaded: {type(exc).__name__}. "
-            f"On macOS the wheel needs the OpenMP runtime: brew install libomp. "
-            f"Otherwise install the train extra: pip install -e '.[train]'."
-        ) from exc
+    XGBClassifier = _import_xgboost_classifier()
 
     params = {**DEFAULT_XGBOOST_PARAMS, **(config or {})}
     monitored = x_validation is not None and y_validation is not None

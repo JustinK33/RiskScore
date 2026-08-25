@@ -112,8 +112,8 @@ from risk_score.explain import DEFAULT_TOP_K, Explainer, build_background
 from risk_score.leakage_check import audit_columns
 from risk_score.logging_setup import bind_run_id, capture_run_log
 from risk_score.modeling import (
-    SUPPORTED_MODEL_TYPES,
     engineering_prefix,
+    ensure_model_available,
     split_by_time,
     train_model,
 )
@@ -210,11 +210,9 @@ def train_run(
     surprise; the CLI turns it on.
     """
     # Checked before anything is created, so a typo leaves no half-written run
-    # directory behind.
-    if model_type not in SUPPORTED_MODEL_TYPES:
-        raise ValueError(
-            f"Supported model types are {list(SUPPORTED_MODEL_TYPES)}; got {model_type!r}."
-        )
+    # directory behind - and so an XGBoost wheel that cannot load says so now
+    # rather than after the 1.19 GB read.
+    ensure_model_available(model_type)
 
     config = config or RunConfig()
     root = Path(output_dir)
@@ -328,6 +326,13 @@ def compare_runs(
         raise ValueError("`models` must name at least one model type.")
     if not tiers:
         raise ValueError("`tiers` must contain at least one tier flag.")
+    # Every model, before the first read. `train_run` checks the one model it is
+    # given, which is not enough here: a comparison whose fourth variant cannot
+    # be fitted would still publish the first three and then abort *before*
+    # writing `comparison.json`, leaving runs in the registry that the comparison
+    # document does not mention. An all-or-nothing command has to know up front.
+    for model_type in models:
+        ensure_model_available(model_type)
     root = Path(output_dir)
     base_config = config or RunConfig()
     # Model-major, so `tiers=(False, True)` reads as two variants of one model
