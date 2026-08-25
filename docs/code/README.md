@@ -91,6 +91,10 @@ The layering is enforced by import direction and readable from the import lines:
 | `dashboard/js/dom.js` | [dom.md](dom.md) | The node primitives and the one table renderer. No `innerHTML` anywhere. |
 | `dashboard/js/charts.js` | [charts.md](charts.md) | Ticks, scales, measured text, and the theme reaching the canvas. |
 | `dashboard/js/api.js` | [api.md](api.md) | One error shape, one cache, one timeout. Why a resize costs nothing. |
+| `dashboard/js/panels.js` | [panels.md](panels.md) | Everything that knows what a report *means*. Every renderer returns a label and a table. |
+| `dashboard/js/score.js` | [score.md](score.md) | The applicant form, generated from `/api/schema`, and the reason-code tornado. |
+| `dashboard/js/retrain.js` | [retrain.md](retrain.md) | Upload, start, poll, reload. Hidden unless the service says both routes are on. |
+| `dashboard/js/main.js` | [main.md](main.md) | Boot, state, wiring. `redraw` never fetches, and a partial run still renders. |
 
 The `*.test.js` files have no pages of their own; each module's page names its tests under **Related tests**.
 
