@@ -6,13 +6,15 @@
  * of panel logic that decides something rather than formatting it: whether a
  * vintage was *removed* or merely absent, which is the difference between drawing
  * no bar and drawing a default rate of zero. `importanceRows` is here for the same
- * reason: it decides which features get no bar at all.
+ * reason: it decides which features get no bar at all, and `comparisonRows` for the
+ * same reason again: it decides which direction counts as an improvement, and a
+ * comparison that colours a regression green is worse than no comparison.
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { embargoRows, importanceRows } from "./panels.js";
+import { comparisonRows, embargoRows, importanceRows } from "./panels.js";
 
 /** The live run's own figures, so the fixture cannot drift from reality. */
 const EMBARGO = {
@@ -143,4 +145,128 @@ test("a missing magnitude is null rather than zero, and draws no bar", () => {
   assert.equal(rows[0].magnitude, null);
   assert.equal(rows[0].direction, null);
   assert.equal(rows[0].width, 0);
+});
+
+/**
+ * The live comparison's own figures: logistic regression under both feature tiers,
+ * trimmed to four metrics covering every direction the payload can declare.
+ */
+const COMPARISON = {
+  baseline: "logistic_regression / origination_only",
+  metrics: {
+    auc_roc: "higher",
+    brier_score: "lower",
+    selected_threshold_total_cost: "lower",
+    approval_rate: "neutral",
+  },
+  variants: [
+    {
+      variant: "logistic_regression / origination_only",
+      model_type: "logistic_regression",
+      feature_tier: "origination_only",
+      auc_roc: 0.6829908133365012,
+      brier_score: 0.10972252032559372,
+      selected_threshold_total_cost: 629.0,
+      approval_rate: 0.8554663372452131,
+      auc_roc_delta: 0.0,
+      brier_score_delta: 0.0,
+      selected_threshold_total_cost_delta: 0.0,
+    },
+    {
+      variant: "logistic_regression / with_lender_priced",
+      model_type: "logistic_regression",
+      feature_tier: "with_lender_priced",
+      auc_roc: 0.7254329347166125,
+      brier_score: 0.10564044101384307,
+      selected_threshold_total_cost: 591.0,
+      approval_rate: 0.62816553428042,
+      auc_roc_delta: 0.042442121380111275,
+      brier_score_delta: -0.004082079311750655,
+      selected_threshold_total_cost_delta: -38.0,
+    },
+  ],
+};
+
+/** The cell for one metric of one variant, by name rather than by position. */
+const cellFor = (row, metric) => row.cells.find((cell) => cell.metric === metric);
+
+test("a lower score is an improvement when the payload says lower is better", () => {
+  const [, variant] = comparisonRows(COMPARISON);
+
+  // The whole point of reading the direction from the payload: both of these are
+  // improvements, and their deltas have opposite signs.
+  assert.equal(cellFor(variant, "auc_roc").tone, "ok");
+  assert.equal(cellFor(variant, "brier_score").tone, "ok");
+  assert.equal(cellFor(variant, "auc_roc").delta > 0, true);
+  assert.equal(cellFor(variant, "brier_score").delta < 0, true);
+});
+
+test("a rise in a lower-is-better metric is a regression", () => {
+  const worse = {
+    ...COMPARISON,
+    variants: [COMPARISON.variants[0], { ...COMPARISON.variants[1], brier_score_delta: 0.004 }],
+  };
+
+  assert.equal(cellFor(comparisonRows(worse)[1], "brier_score").tone, "warn");
+});
+
+test("a metric the payload marks neutral is never coloured", () => {
+  const [, variant] = comparisonRows(COMPARISON);
+  const approval = cellFor(variant, "approval_rate");
+
+  // Approval fell 23 points, which is a large change and not a worse one: it is a
+  // consequence of the threshold, and colouring it would read as a verdict.
+  assert.equal(approval.tone, null);
+  assert.equal(approval.delta, null);
+  assert.equal(approval.text, "62.8%");
+});
+
+test("the baseline row carries no deltas at all", () => {
+  const [baseline] = comparisonRows(COMPARISON);
+
+  assert.equal(baseline.isBaseline, true);
+  // Zero is what the payload sends, and `+0.0000` against every baseline number
+  // reads as a measurement that came out flat rather than as the reference.
+  assert.equal(baseline.cells.every((cell) => cell.delta === null), true);
+  assert.equal(baseline.cells.every((cell) => cell.deltaText === ""), true);
+});
+
+test("the baseline is the one the payload names, not the first row", () => {
+  const reordered = {
+    ...COMPARISON,
+    variants: [COMPARISON.variants[1], COMPARISON.variants[0]],
+  };
+  const rows = comparisonRows(reordered);
+
+  assert.deepEqual(
+    rows.map((row) => row.isBaseline),
+    [false, true],
+  );
+});
+
+test("a delta is written in its metric's own units", () => {
+  const [, variant] = comparisonRows(COMPARISON);
+
+  assert.equal(cellFor(variant, "auc_roc").deltaText, "+0.0424");
+  // A weighted error count, not a fraction: `-38.0000` would suggest four
+  // meaningful decimals in a number that counts loans.
+  assert.equal(cellFor(variant, "selected_threshold_total_cost").deltaText, "-38");
+  assert.equal(cellFor(variant, "selected_threshold_total_cost").text, "591");
+});
+
+test("no comparison yields no rows rather than throwing", () => {
+  assert.deepEqual(comparisonRows(null), []);
+  assert.deepEqual(comparisonRows({}), []);
+  assert.deepEqual(comparisonRows({ variants: [] }), []);
+});
+
+test("a metric with no label falls back to a readable one", () => {
+  const rows = comparisonRows({
+    metrics: { some_new_metric: "higher" },
+    variants: [{ variant: "a", some_new_metric: 1 }],
+  });
+
+  // A metric added server-side appears without a dashboard change.
+  assert.equal(rows[0].cells[0].label, "Some New Metric");
+  assert.equal(rows[0].cells[0].text, "1.0000");
 });

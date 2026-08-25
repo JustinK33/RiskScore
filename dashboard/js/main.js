@@ -21,6 +21,7 @@
 import {
   ApiError,
   getCalibration,
+  getComparison,
   getDrift,
   getHealth,
   getMetrics,
@@ -43,8 +44,19 @@ import {
   setStatus,
   setText,
 } from "./dom.js";
-import { count, number, percent, psiBand, shortRunId, timestamp } from "./format.js";
 import {
+  count,
+  labelize,
+  number,
+  percent,
+  psiBand,
+  shortRunId,
+  signed,
+  timestamp,
+} from "./format.js";
+import {
+  comparisonRows,
+  comparisonTable,
   drawCalibration,
   drawEmbargo,
   drawScorePsi,
@@ -53,6 +65,7 @@ import {
   featureImportanceTable,
   featurePsiTable,
   importanceRows,
+  variantName,
 } from "./panels.js";
 import { mountScorePanel } from "./score.js";
 
@@ -75,6 +88,7 @@ let state = {
   vintages: null,
   drift: null,
   shap: null,
+  comparison: null,
   runs: [],
   problems: [],
 };
@@ -130,18 +144,31 @@ async function load(runId = null) {
 
   // `allSettled`, not `all`: a run predating a given report should show every
   // panel it can. The rejected ones are collected and named in the banner.
-  const [model, runs, manifest, metrics, calibration, thresholdCosts, vintages, drift, shap] =
-    await Promise.allSettled([
-      getModel(),
-      getRuns(),
-      runId ? getRun(runId) : getModel().then((identity) => getRun(identity.run_id)),
-      getMetrics(runId),
-      getCalibration(runId),
-      getThresholdCosts(runId),
-      getVintages(runId),
-      getDrift(runId),
-      getShapSummary(runId),
-    ]);
+  const [
+    model,
+    runs,
+    manifest,
+    metrics,
+    calibration,
+    thresholdCosts,
+    vintages,
+    drift,
+    shap,
+    comparison,
+  ] = await Promise.allSettled([
+    getModel(),
+    getRuns(),
+    runId ? getRun(runId) : getModel().then((identity) => getRun(identity.run_id)),
+    getMetrics(runId),
+    getCalibration(runId),
+    getThresholdCosts(runId),
+    getVintages(runId),
+    getDrift(runId),
+    getShapSummary(runId),
+    // No `runId`: a comparison describes several runs at once and lives at the
+    // report root, so it does not change when the picker does. The panel says so.
+    getComparison(),
+  ]);
 
   // Unwrapped exactly once each, because `value` records a failure as a side
   // effect and calling it twice on the same rejection would report it twice.
@@ -166,6 +193,11 @@ async function load(runId = null) {
     vintages: value(vintages, "vintages"),
     drift: value(drift, "drift"),
     shap: value(shap, "SHAP summary"),
+    // A 404 here is not a missing report, it is the ordinary state of a tree whose
+    // runs were trained rather than compared - so it must not land in `problems`,
+    // turn the status pill amber, or claim the run is incomplete. Any other failure
+    // is a real one and is reported like the rest.
+    comparison: comparison.reason?.status === 404 ? null : value(comparison, "comparison"),
     runs: history?.runs || [],
     problems,
   };
@@ -181,6 +213,7 @@ function render() {
   renderMetrics();
   renderRunDetails();
   renderEmbargoFacts();
+  renderComparison();
   renderDrift();
   renderImportance();
   renderArtifacts();
@@ -452,6 +485,85 @@ function renderDrift() {
     unstable.length
       ? `${unstable.join(", ")} moved enough to warrant a retrain before this model is relied on.`
       : "No feature moved past 0.25 between the two partitions, so the population the model was fitted on is the population it was measured on.",
+  );
+}
+
+/**
+ * The comparison table and the leakage cost beside it.
+ *
+ * The panel is present even when no comparison has been published, which is the
+ * usual state of a tree whose runs were trained rather than compared. It says so
+ * and names the command, rather than being hidden: a reader who cannot see that
+ * the models were compared at all has no reason to believe the choice of one was
+ * measured.
+ *
+ * "Same split" is a real integrity check and not decoration. Every delta in the
+ * table is a difference between two numbers computed on the same rows, so if two
+ * variants disagree about how many rows they were fitted or scored on, the deltas
+ * are comparing two different questions and the panel has to say so instead of
+ * printing them as a result.
+ */
+function renderComparison() {
+  // Unwrapped here rather than in the renderer: `/api/comparison` nests its payload
+  // under its own name, because the file it serves is one document, where `/api/drift`
+  // merges two into one object.
+  const payload = state.comparison?.comparison || null;
+  const node = $("#comparisonTable");
+  if (node) replaceChildren(node, comparisonTable(payload));
+
+  const rows = comparisonRows(payload);
+  if (rows.length === 0) {
+    replaceChildren($("#comparisonFacts"), []);
+    setText(
+      "#comparisonNote",
+      "Nothing has been compared in this report tree yet. `riskscore compare <extract> --tiers both` " +
+        "fits every model and tier on one split and publishes the table above, which is how the cost " +
+        "of admitting the lender's own price gets measured rather than asserted.",
+    );
+    return;
+  }
+
+  const splits = new Set(rows.map((row) => `${row.rows_train}/${row.rows_test}`));
+  const best = payload?.best_by_auc_roc;
+  const bestRow = rows.find((row) => row.variant === best?.variant);
+  const gains = Array.isArray(payload?.lender_priced_delta) ? payload.lender_priced_delta : [];
+
+  replaceChildren($("#comparisonFacts"), [
+    definition("Variants fitted", count(rows.length)),
+    definition(
+      "Same split",
+      splits.size === 1
+        ? `${count(rows[0].rows_train)} train, ${count(rows[0].rows_test)} test`
+        : "no - the variants disagree on row counts",
+    ),
+    definition(
+      "Best by AUC",
+      // Named the way the table names it rather than as the raw
+      // `logistic_regression / with_lender_priced`: the same variant spelled two
+      // ways in two panels reads as two variants.
+      best ? `${variantName(bestRow) || best.variant} (${number(best.auc_roc, 4)})` : null,
+    ),
+    definition(
+      "Lender-priced gain",
+      gains.length ? gains.map((gain) => signed(gain.auc_roc_gain, 4)).join(", ") : null,
+    ),
+    definition("Published", timestamp(payload?.generated_at)),
+  ]);
+
+  setText(
+    "#comparisonNote",
+    gains.length
+      ? gains
+          .map(
+            (gain) =>
+              `For ${labelize(gain.model_type)}, admitting the lender's own price adds ` +
+              `${signed(gain.auc_roc_gain, 4)} AUC (${number(gain.auc_roc_origination_only, 4)} → ` +
+              `${number(gain.auc_roc_with_lender_priced, 4)}). That is the measured cost of the ` +
+              `default tier, and it buys a model that cannot score an application the lender has ` +
+              `not already priced.`,
+          )
+          .join(" ")
+      : "Only one feature tier was fitted, so the cost of excluding the lender-priced features is not measured here. `riskscore compare --tiers both` measures it.",
   );
 }
 

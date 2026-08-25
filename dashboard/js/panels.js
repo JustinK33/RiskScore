@@ -35,6 +35,7 @@ import {
 } from "./charts.js";
 import { el, renderTable } from "./dom.js";
 import {
+  cost,
   count,
   isMissing,
   labelize,
@@ -795,6 +796,170 @@ export function featureImportanceTable(payload) {
         "Mean absolute SHAP contribution per source feature on the training sample, largest first",
       empty: "No SHAP summary for this run.",
       classes: "importance-table feature-rows",
+    },
+  );
+}
+
+// --- model comparison ----------------------------------------------------------
+
+/**
+ * The metric names, in the words the metric cards already use.
+ *
+ * `labelize` gets `auc_roc` right and almost nothing else: it renders `psi_score`
+ * as "PSI Score" and `expected_calibration_error` as "Expected Calibration Error",
+ * and a metric called one thing here and another on the card above reads as two
+ * different measurements. An unknown key still falls back to `labelize`, so a
+ * metric added to `COMPARISON_METRICS` server-side appears without a dashboard
+ * change - just less prettily.
+ */
+const METRIC_LABELS = {
+  auc_roc: "AUC ROC",
+  average_precision: "Average precision",
+  ks_statistic: "KS statistic",
+  brier_score: "Brier score",
+  expected_calibration_error: "Calibration error",
+  selected_threshold_total_cost: "Threshold cost",
+  psi_score: "Score PSI",
+  approval_rate: "Approval rate",
+};
+
+/**
+ * How each metric is written. Four decimals unless it is not a fraction: the
+ * threshold cost is a weighted count of errors and reads as a grouped integer, and
+ * the approval rate is a share of the book, which every other panel writes as a
+ * percentage.
+ */
+const METRIC_FORMATS = {
+  selected_threshold_total_cost: cost,
+  approval_rate: (value) => percent(value, 1),
+};
+
+/** `origination_only` -> `origination only`. The tier as words, not an identifier. */
+const tierName = (tier) => String(tier || "").replace(/_/g, " ");
+
+/**
+ * `Logistic Regression, origination only`. One variant's name in prose.
+ *
+ * Exported because the table writes the model and the tier on two lines and the
+ * panel beside it writes them in a sentence, and a variant spelled
+ * `logistic_regression / with_lender_priced` in one place and "Logistic
+ * Regression, with lender priced" in the other reads as two different variants.
+ */
+export function variantName(variant) {
+  return variant ? `${labelize(variant.model_type)}, ${tierName(variant.feature_tier)}` : null;
+}
+
+const formatMetric = (name, value) =>
+  (METRIC_FORMATS[name] || ((plain) => number(plain, 4)))(value);
+
+/** The delta in the metric's own units, signed, so `-38` and `+0.0424` both read. */
+const formatDelta = (name, delta) => {
+  const body = formatMetric(name, Math.abs(delta));
+  return delta > 0 ? `+${body}` : delta < 0 ? `-${body}` : body;
+};
+
+/**
+ * One row per variant, one cell per metric, deltas against the baseline.
+ *
+ * Variants are rows and metrics are columns - the same orientation as
+ * `comparison.json` and as the CLI's table, so nothing here transposes the
+ * artifact. It is also the orientation that survives XGBoost being installed: a
+ * third and fourth variant add rows, and rows are cheaper than columns.
+ *
+ * Which direction counts as an improvement is read from the payload's own
+ * `metrics` map and never decided here. A lower Brier score is better and a lower
+ * AUC is not, and a dashboard holding its own copy of that knowledge is one that
+ * will eventually colour a regression green.
+ */
+export function comparisonRows(payload) {
+  const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const directions = payload?.metrics && typeof payload.metrics === "object" ? payload.metrics : {};
+  const names = Object.keys(directions);
+
+  return variants.map((variant, index) => {
+    // Matched by name, with position as the fallback. `comparison_table` does put
+    // the baseline first, but the deltas are what actually define it and they are
+    // computed server-side, so the declared name is the more reliable of the two.
+    const isBaseline = payload?.baseline ? variant.variant === payload.baseline : index === 0;
+    return {
+      ...variant,
+      isBaseline,
+      cells: names.map((name) => {
+        const raw = variant[`${name}_delta`];
+        const delta = isBaseline || isMissing(raw) ? null : Number(raw);
+        // +1 if a rise is an improvement, -1 if a fall is, 0 for a metric the
+        // payload marked neutral - `approval_rate` is a policy consequence rather
+        // than a result, and colouring it would invite reading a difference in who
+        // gets approved as a win.
+        const better = directions[name] === "higher" ? 1 : directions[name] === "lower" ? -1 : 0;
+        return {
+          metric: name,
+          label: METRIC_LABELS[name] || labelize(name),
+          text: formatMetric(name, variant[name]),
+          // The baseline's own delta is zero by construction, so it is dropped
+          // rather than printed: a column of `+0.0000` against every baseline
+          // number reads as a measurement that came out flat.
+          delta,
+          deltaText: delta === null ? "" : formatDelta(name, delta),
+          tone: !delta || !better ? null : Math.sign(delta) === better ? "ok" : "warn",
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * The comparison table. Returns a node, like `featurePsiTable`.
+ *
+ * The columns are built from the payload's metric list rather than from a literal
+ * here, so the table is exactly as wide as the comparison is - and an empty
+ * payload collapses to one column carrying the empty message instead of a header
+ * row for metrics that were never measured.
+ */
+export function comparisonTable(payload) {
+  const rows = comparisonRows(payload);
+  const metrics = rows[0]?.cells || [];
+  return renderTable(
+    [
+      {
+        key: "variant",
+        label: "Variant",
+        render: (row) => [
+          el("span", { textContent: labelize(row.model_type) }),
+          el("small", {
+            className: "hint",
+            // The tier is the other half of a variant's identity, and `baseline`
+            // has to be visible on the row it is written on: every delta below is
+            // relative to it, so a reader who cannot see which row is the reference
+            // cannot read the signs.
+            textContent: `${tierName(row.feature_tier)}${row.isBaseline ? " · baseline" : ""}`,
+          }),
+        ],
+      },
+      ...metrics.map((metric, index) => ({
+        key: metric.metric,
+        label: metric.label,
+        align: "right",
+        render: (row) => {
+          const cell = row.cells[index];
+          return [
+            cell.text,
+            cell.delta === null
+              ? null
+              : el("small", {
+                  className: "delta",
+                  textContent: cell.deltaText,
+                  style: cell.tone ? { color: `var(--${cell.tone})` } : null,
+                }),
+          ];
+        },
+      })),
+    ],
+    rows,
+    {
+      caption: "Every variant on one split, deltas against the baseline",
+      empty: "No comparison has been published.",
+      classes: "comparison-table",
     },
   );
 }

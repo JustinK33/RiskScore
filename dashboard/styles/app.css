@@ -566,9 +566,20 @@ main {
   white-space: nowrap;
 }
 
+/*
+ * Headers wrap; cells do not.
+ *
+ * A header is a two- or three-word phrase and a cell is a number, so the header is
+ * what sets a column's width: `AVERAGE PRECISION` on one line wants about 160px,
+ * and nine of those pushed the comparison table's last two columns outside their
+ * scroll container at 1440px. Wrapping drops each column to its widest single word,
+ * which is what makes a nine-column table fit a laptop at all. Browsers only break
+ * a line that has to break, so nothing wraps where there is room.
+ */
 .data-table thead th {
   position: sticky;
   top: 0;
+  white-space: normal;
   /* Opaque, or the scrolled rows show through the sticky header. */
   background: var(--surface);
   color: var(--muted);
@@ -612,6 +623,36 @@ main {
 @media (min-width: 901px) {
   .panel-grid.one-row .side-panel {
     grid-row: 1;
+  }
+}
+
+/*
+ * One section stacks a breakpoint later than the rest.
+ *
+ * The comparison table is nine columns and wants 752px. Beside a 320px aside the
+ * table panel gets 582px at a 1024px viewport, so its last two columns - Score PSI
+ * and Approval rate - sit outside the scroll container, behind a macOS overlay
+ * scrollbar that is invisible until it is scrolled. At full width the table fits
+ * with room to spare, and the aside is annotation rather than data, so it loses
+ * nothing by moving below.
+ *
+ * Both classes in the selector, rather than relying on this block coming after the
+ * `one-row` rule above: at 901-1200px both rules match, and a specificity tie
+ * decided by source order is the thing that put an aside above its own table once
+ * already.
+ */
+@media (max-width: 1200px) {
+  .panel-grid.stack-late {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Both selectors: the second wins the `one-row` case on specificity outright, and
+     the first covers a `stack-late` grid that is not `one-row` - the drift section,
+     whose aside spans two rows and would otherwise stay pinned to column 2. */
+  .panel-grid.stack-late .side-panel,
+  .panel-grid.one-row.stack-late .side-panel {
+    grid-column: 1;
+    grid-row: auto;
   }
 }
 
@@ -873,6 +914,52 @@ main {
   /* 22% and not the tornado column's 30%: this table's row header carries a full
      sentence of description, and a wider bar column costs the description a line. */
   width: 22%;
+}
+
+/*
+ * The comparison table: a variant name over its tier, and a delta under its value.
+ *
+ * The delta shares its value's cell rather than taking a column of its own. Eight
+ * metrics already make eight columns, and doubling that would guarantee a sideways
+ * scroll at every width the page supports - whereas a second line costs one row of
+ * height for the whole table.
+ *
+ * Blocks and not a grid, for the reason `.reason-table` records: a grid takes the
+ * cell out of the table's row box, and each column then draws its bottom border at
+ * a different height.
+ */
+.comparison-table th[scope="row"] {
+  white-space: normal;
+}
+
+/*
+ * Every value in a row starts on the row's first line.
+ *
+ * A cell's height here is set by whichever neighbour has the most lines - three for
+ * a wrapped variant name, two for a value with a delta under it - and the default
+ * middle alignment then drops a value with no delta half a line below the rest of
+ * its row. Approval rate is neutral and never carries one, so it read as misaligned
+ * against the eight numbers beside it. Top-aligning puts every number on the same
+ * baseline and leaves the deltas hanging underneath, which is the reading order.
+ */
+.comparison-table th,
+.comparison-table td {
+  vertical-align: top;
+}
+
+.comparison-table th[scope="row"] .hint,
+.comparison-table .delta {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+}
+
+.comparison-table .delta {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  /* The deltas sit in a column under each other, so they have to align on the
+     decimal point like the values above them do. */
+  font-variant-numeric: tabular-nums;
 }
 
 /* A share rather than a fixed width, so the plot scales with the panel while the

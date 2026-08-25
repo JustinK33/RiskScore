@@ -33,6 +33,16 @@ const THEMES = ["light", "dark"];
 /** The breakpoint below which app.css drops both bar columns. Keep the two in step. */
 const NARROW_BAR_WIDTH = 640;
 
+/**
+ * At and above this width every panel table must fit its container.
+ *
+ * A `.table-scroll` box swallows its own overflow, so a table whose last columns
+ * are unreachable looks identical to one that fits - macOS draws no scrollbar until
+ * something scrolls. Below 900px the layout is stacked and a nine-column table is
+ * wider than the viewport no matter what, which is what the scroll container is for.
+ */
+const FULL_TABLE_WIDTH = 900;
+
 const CHROME =
   process.env.CHROME ||
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -83,6 +93,11 @@ const PROBE = `(() => {
     detailRows: document.querySelectorAll("#runDetails .def").length,
     embargoFacts: document.querySelectorAll("#embargoFacts .def").length,
     featurePsiRows: document.querySelectorAll("#featurePsi tbody tr").length,
+    comparisonRows: document.querySelectorAll("#comparisonTable tbody tr").length,
+    comparisonDeltas: document.querySelectorAll("#comparisonTable .delta").length,
+    // Never empty in either state: with a comparison it carries the measured
+    // leakage cost, and without one it carries the command that publishes it.
+    comparisonNote: (document.querySelector("#comparisonNote")?.textContent || "").length,
     importanceRows: document.querySelectorAll("#importanceTable tbody tr").length,
     // The bar column is the only cell on the page whose content is a node rather
     // than text, so it is the one that a change to renderTable would silently
@@ -91,6 +106,13 @@ const PROBE = `(() => {
     importanceBars: [...document.querySelectorAll("#importanceTable .bar")].filter(
       (bar) => bar.getBoundingClientRect().width >= 1,
     ).length,
+    // A table-scroll box contains its own overflow, so the document-level check
+    // above is blind to a table whose last columns sit outside it - which is how a
+    // nine-column comparison shipped with its approval-rate column unreachable at
+    // 1440px. Measured per container, and reported with the width it wanted.
+    wideTables: [...document.querySelectorAll(".table-scroll")]
+      .filter((box) => box.scrollWidth > box.clientWidth + 1)
+      .map((box) => box.id + " wants " + box.scrollWidth + " in " + box.clientWidth),
     artifacts: document.querySelectorAll("#artifactLinks a").length,
     tables: [...document.querySelectorAll(".data-fallback table")].map(
       (t) => t.querySelectorAll("tbody tr").length,
@@ -288,6 +310,17 @@ try {
       // table wearing a header.
       if (report.featurePsiRows < 2) problems.push("the feature PSI table is empty");
       if (report.importanceRows < 2) problems.push("the feature importance table is empty");
+      // One row is the "nothing has been compared" placeholder, which is a legitimate
+      // state - so the assertion is that the panel rendered *something*, and that a
+      // real multi-variant comparison also rendered its deltas.
+      if (report.comparisonRows < 1) problems.push("the comparison panel rendered no table");
+      if (report.comparisonRows > 1 && report.comparisonDeltas < 1) {
+        problems.push("a multi-variant comparison drew no deltas");
+      }
+      if (report.comparisonNote < 40) problems.push("the comparison panel explains nothing");
+      if (width >= FULL_TABLE_WIDTH && report.wideTables.length) {
+        problems.push(`a table hides columns: ${report.wideTables.join("; ")}`);
+      }
       // The bar column is dropped below 640px, deliberately, so its absence there is
       // the expected reading rather than a failure - and its presence would be the
       // 250px of overflow the tornado column taught us to avoid.
@@ -314,6 +347,8 @@ try {
           `canvas=${report.canvases.map((c) => c.cssWidth).join("/")} ` +
           `tables=${report.tables.join("/")} psi=${report.featurePsiRows}r ` +
           `imp=${report.importanceRows}r/${report.importanceBars}b ` +
+          `cmp=${report.comparisonRows}r/${report.comparisonDeltas}d ` +
+          `wide=[${report.wideTables.join("; ")}] ` +
           `score=${report.scoreFields}f/${report.scoreGroups}g/${report.scoreSelects}s ` +
           `verdict=${report.verdict || "none"}/${report.reasonRows}r ` +
           `banners=${report.banners.length}`,
