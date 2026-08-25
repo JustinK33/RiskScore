@@ -45,7 +45,7 @@ See [decisions/0003-train-validation-test-split.md](decisions/0003-train-validat
 
 ## Documentation scope
 
-`docs/code/` covers every file that contains executable logic: `src/risk_score/*.py`, `src/risk_score/api/*.py`, `dashboard/index.html`, `dashboard/styles/*.css`, `dashboard/js/*.js`, `tests/conftest.py`, and both files in `scripts/`.
+`docs/code/` covers every file that contains executable logic: `src/risk_score/*.py`, `src/risk_score/api/*.py`, `dashboard/index.html`, `dashboard/styles/*.css`, `dashboard/js/*.js`, `tests/conftest.py`, and every file in `scripts/`.
 Configuration files, `.gitignore`, and top-level READMEs are intentionally out of scope - they are either self-describing or documented where they are used.
 The `*.test.js` files have no page of their own; each module's page names its tests.
 The two `__init__.py` files are exempt with a stated reason.

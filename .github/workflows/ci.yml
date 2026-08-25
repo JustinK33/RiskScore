@@ -66,3 +66,54 @@ jobs:
       # raised, never lowered, as phases land. A drop below it fails the build.
       - name: pytest
         run: pytest -q --cov --cov-report=term-missing --cov-fail-under=80
+
+  dashboard:
+    name: Dashboard helpers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # No `npm ci` and no cache key: dashboard/package.json exists for
+      # `"type": "module"` and one script, and there are no dependencies to
+      # install. See docs/decisions/0009-vanilla-dashboard.md.
+      - name: node --test
+        working-directory: dashboard
+        run: node --test
+
+  smoke:
+    name: End-to-end on synthetic data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install OpenMP runtime
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgomp1
+      # The serve extra as well as train: this job boots the real service, and a
+      # missing serve dependency is exactly the failure a training-only install is
+      # supposed to tolerate and this job is supposed to catch.
+      - run: python -m pip install -e ".[train,serve]"
+      # The only automated proof of the artifact contract. `reports/` is
+      # gitignored, so nothing in the pytest suite ever sees a run tree published
+      # by the real CLI.
+      # --workdir keeps the tree instead of using a tempdir it deletes, so the
+      # step below has something to upload when a check fails.
+      - name: make-sample-data, compare, activate, card, serve, predict
+        run: python scripts/smoke_e2e.py --workdir "${RUNNER_TEMP}/smoke"
+      - name: Upload the run tree on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-run-tree
+          # No model.joblib: a pickle built from a PR's code is not something to
+          # hand out as a downloadable artifact.
+          path: |
+            ${{ runner.temp }}/smoke/reports/**
+            ${{ runner.temp }}/smoke/serve.log
+            !${{ runner.temp }}/smoke/reports/runs/*/model.joblib
+          if-no-files-found: warn

@@ -110,6 +110,7 @@ The `*.test.js` files have no pages of their own; each module's page names its t
 | `tests/conftest.py` | [conftest.md](conftest.md) | The shared fixtures. One real bundle fitted once, and no test reads the environment. |
 | `scripts/probe_dashboard.mjs` | [probe_dashboard.md](probe_dashboard.md) | The dashboard measured in real Chrome at six widths in two themes, with the offender named. |
 | `scripts/check_docs.py` | [check_docs.md](check_docs.md) | The enforcement for this directory. In scope itself, because a rule that exempts its own checker has a hole in it. |
+| `scripts/smoke_e2e.py` | [smoke_e2e.md](smoke_e2e.md) | The documented path walked on synthetic data. The only automated proof of the artifact contract. |
 
 ## Reading the audit IDs
 
