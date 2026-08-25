@@ -211,9 +211,17 @@ def test_the_two_ks_directions_recover_the_textbook_statistic(
     labels = y_true.to_numpy()
     scores = y_score.to_numpy()
 
-    two_sided = ks_2samp(
-        scores[labels == 0], scores[labels == 1], alternative="two-sided", method="asymp"
-    ).statistic
+    # `errstate` because the two-sided asymptotic p-value divides by `round(en)`
+    # where `en = n1*n2/(n1+n2)`, and one row per class gives `round(0.5) == 0`
+    # under banker's rounding - a divide-by-zero inside scipy on the smallest
+    # input this strategy can draw. The p-value is discarded; only `.statistic`
+    # is read, and that is computed before the division. Suppressed at the call
+    # site rather than filtered in `pyproject.toml` so the suite keeps failing on
+    # a divide-by-zero anywhere else.
+    with np.errstate(divide="ignore"):
+        two_sided = ks_2samp(
+            scores[labels == 0], scores[labels == 1], alternative="two-sided", method="asymp"
+        ).statistic
     assert forward >= 0.0
     assert backward >= 0.0
     assert max(forward, backward) == pytest.approx(two_sided, abs=1e-12)
