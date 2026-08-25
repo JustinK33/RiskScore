@@ -345,3 +345,83 @@ def test_explaining_something_that_is_not_a_frame_is_refused(explainer: Explaine
     """These steps route columns by name; an array has none."""
     with pytest.raises(TypeError, match="DataFrame"):
         explainer.explain(np.zeros((2, 3)))
+
+
+def test_a_background_from_a_different_preprocessor_is_refused(trained_run: RunResult) -> None:
+    """A shape mismatch is caught at construction, naming both widths.
+
+    It is the failure mode a hand-assembled or half-migrated bundle produces, and
+    it is silent otherwise: numpy broadcasts a 1-column background against an
+    n-coefficient model without complaint, so every reason code would come out
+    plausible and wrong. The message names both numbers because the useful fact is
+    which one is unexpected.
+    """
+    from dataclasses import replace
+
+    background = np.asarray(trained_run.bundle.shap_background, dtype=np.float64)
+    with pytest.raises(ValueError, match="coefficients"):
+        Explainer(replace(trained_run.bundle, shap_background=background[:, :-1]))
+
+
+@pytest.mark.parametrize("max_rows", [0, -1])
+def test_a_background_of_no_rows_is_refused(trained_run: RunResult, max_rows: int) -> None:
+    """Zero background rows means a mean over nothing, which is NaN.
+
+    Every contribution would then be NaN and the reason table would render as
+    dashes - a whole panel of missing values traced back to one argument.
+    """
+    with pytest.raises(ValueError, match="max_rows"):
+        build_background(trained_run.bundle.pipeline, pd.DataFrame(), max_rows=max_rows)
+
+
+@pytest.mark.parametrize("k", [0, -1])
+def test_asking_for_no_reasons_is_refused(
+    explainer: Explainer, raw_loans: pd.DataFrame, k: int
+) -> None:
+    """`top(0)` would silently return an empty tuple, which reads as "no drivers".
+
+    A model always has drivers, so an empty reason list is never a true answer -
+    it is a caller passing through an unvalidated query parameter.
+    """
+    explanation = explainer.explain(raw_loans.head(1))[0]
+    with pytest.raises(ValueError, match="`k` must be at least 1"):
+        explanation.top(k)
+
+
+def test_a_design_matrix_column_from_nowhere_is_reported_under_its_own_name(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unattributable column is named, not dropped.
+
+    Reachable only by handing `_source_of` a column no declared feature explains,
+    which is what a preprocessor grown a step this module does not know about
+    produces. Dropping it would leave an explanation that no longer sums to the
+    margin - the one property the whole module rests on - while a reason code with
+    an odd name is obvious the first time anybody looks at it.
+    """
+    import logging
+
+    from risk_score.explain import _source_of
+
+    declared = frozenset({"purpose", "loan_amnt"})
+    assert _source_of("purpose_car", declared) == "purpose"
+
+    with caplog.at_level(logging.WARNING, logger="risk_score.explain"):
+        assert _source_of("some_new_step_output", declared) == "some_new_step_output"
+    assert "cannot attribute" in caplog.text
+
+
+def test_a_reason_for_a_feature_the_frame_lacks_has_no_value(explainer: Explainer) -> None:
+    """`_display_value` answers None rather than raising on a missing column.
+
+    The engineered frame is built per request, so a feature the model was fitted on
+    but this frame could not produce has no applicant value to cite. A reason code
+    with a null value renders as "not provided", which is true; a KeyError takes
+    /predict down over a cosmetic field.
+    """
+    from risk_score.explain import _display_value
+
+    frame = pd.DataFrame({"loan_amnt": [1000.0]})
+    assert _display_value(frame, "loan_amnt", 0) == 1000.0
+    assert _display_value(frame, "not_a_column", 0) is None
+    assert _display_value(pd.DataFrame({"dti": [pd.NA]}), "dti", 0) is None

@@ -111,7 +111,7 @@ The `columns` count is published too, so a reader can see that `addr_state`'s im
 
 ## Related tests
 
-`tests/test_explain.py`, 20 tests, built around the additivity property.
+`tests/test_explain.py`, built around the additivity property.
 
 - `test_the_contributions_reconstruct_the_models_own_margin` and `test_tree_contributions_reconstruct_the_boosters_own_margin` are the reason this module can skip `shap`: both check against the model's own margin, not against a library agreeing with itself. The tree one is `requires_xgboost`.
 - `test_the_baseline_is_the_score_of_an_average_applicant` pins the baseline: an applicant at the background mean must have no contributions at all.
@@ -119,7 +119,9 @@ The `columns` count is published too, so a reader can see that `addr_state`'s im
 - `test_one_hot_columns_collapse_into_their_source_feature` and `test_a_missing_value_indicator_is_attributed_to_the_feature_it_is_about` cover the name mapping in both of its non-obvious cases.
 - `test_a_reason_code_cites_the_applicants_own_value_not_a_scaled_one` is the readability claim, asserted against the engineered frame.
 - `test_the_background_is_capped_and_deterministic` is the byte-identical requirement.
-- `test_a_model_neither_path_can_explain_is_refused_at_construction` and `test_a_linear_bundle_without_a_background_is_refused` are the two construction-time refusals.
+- `test_a_model_neither_path_can_explain_is_refused_at_construction`, `test_a_linear_bundle_without_a_background_is_refused` and `test_a_background_from_a_different_preprocessor_is_refused` are the three construction-time refusals. The last one matters most: numpy broadcasts a one-column background against an n-coefficient model without complaint, so a half-migrated bundle would produce reason codes that are plausible and wrong rather than an error.
+- `test_a_design_matrix_column_from_nowhere_is_reported_under_its_own_name` covers the unattributable-column branch, which is only reachable by calling `_source_of` directly - a preprocessor grown a step this module does not know about is the real cause and cannot be built through the public API.
+- `test_a_background_of_no_rows_is_refused`, `test_asking_for_no_reasons_is_refused` and `test_a_reason_for_a_feature_the_frame_lacks_has_no_value` cover the three argument guards. Each one silently returns something readable if unguarded: a NaN mean, an empty reason list that reads as "no drivers", and a KeyError that takes `/predict` down over a cosmetic field.
 - `tests/test_pipeline.py::test_the_pipeline_writes_every_documented_artifact` includes `shap_summary.csv`, so the artifact cannot silently stop being written.
 
 ## Known limits
