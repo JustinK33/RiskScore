@@ -273,6 +273,11 @@ def create_default_target(
         raise KeyError(f"Expected status column `{status_column}` is missing.")
 
     normalized_status = loans[status_column].astype("string").str.strip().str.lower()
+    # NA-first, then two positive assignments, so a status in neither set stays NA
+    # by construction. The alternative - `isin(DEFAULT_STATUSES).astype(int)` -
+    # collapses "paid" and "unknown" into the same 0 and is exactly the bug the
+    # docstring above warns about. The two sets are disjoint, so the order of
+    # these two lines does not matter; `tests/test_data_loading.py` pins that.
     target = pd.Series(pd.NA, index=loans.index, dtype="Int64", name=target_column)
     target[normalized_status.isin(DEFAULT_STATUSES)] = 1
     target[normalized_status.isin(PAID_STATUSES)] = 0
@@ -284,6 +289,11 @@ def _default_rate_by_vintage(loans: pd.DataFrame, *, date_column: str = "issue_d
     if date_column not in loans.columns or "loan_status" not in loans.columns:
         return pd.Series(dtype="float64", name="default_rate")
     target = create_default_target(loans)
+    # `dropna` covers both columns at once, and both matter: a non-terminal status
+    # is NA rather than 0 (see `create_default_target`) and an unparseable issue
+    # date has no vintage to attribute. Either one silently included would make
+    # this rate disagree with the label the model is actually trained on, which is
+    # the one number this function exists to let a reader check by eye.
     frame = pd.DataFrame({"year": loans[date_column].dt.year, "default_flag": target}).dropna()
     if frame.empty:
         return pd.Series(dtype="float64", name="default_rate")
@@ -345,7 +355,17 @@ def apply_outcome_maturity_embargo(
     known = issued.notna() & months.notna()
     # DateOffset arithmetic per row is slow on millions of rows; converting the
     # month count to a period offset keeps it vectorized.
+    #
+    # `fillna(0)` is not a maturity decision, it is what `astype("int64")` needs:
+    # a nullable Int64 with NA in it will not cast. Those rows say "matured at
+    # issue", which would be the wrong answer, and they never reach it - `known`
+    # is ANDed in below and they are counted as `rows_unknown_maturity`.
     matured_by = issued.dt.to_period("M") + months.fillna(0).astype("int64")
+    # Both sides are truncated to month start, so the comparison is at the
+    # precision the data actually has: `issue_d` is `Dec-2015` in the extract and
+    # the day is an artifact of parsing. It also makes the rule insensitive to how
+    # a caller spells the snapshot - '2018-12-01' and '2018-12-31' keep the same
+    # rows, rather than one silently admitting a vintage the other embargoes.
     mature = known & (matured_by.dt.to_timestamp() <= snapshot_ts.to_period("M").to_timestamp())
 
     kept = loans.loc[mature]

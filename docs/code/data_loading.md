@@ -99,6 +99,10 @@ As a `set`, a caller who mutated it would have changed the filter for every othe
 
 Named audit regressions: `test_b02_a_frame_with_both_loan_amnt_and_funded_amnt_yields_one_column`, `test_p01_the_read_is_projected_to_registered_columns`, `test_p02_create_default_target_returns_a_series_not_a_frame_copy`.
 
+`test_the_two_outcome_vocabularies_are_disjoint` pins the relationship between the three status constants rather than any one of them: the two outcome sets do not overlap, both are lowercased for the lookup, and together they cover `CLOSED_LOAN_STATUSES` exactly.
+That last equality is the one worth having.
+A terminal status in neither outcome set passes the closed-loan filter and is then dropped as an NA label, so the rows disappear between two functions that each count only their own removals.
+
 The embargo's load-bearing test is `test_embargo_removes_the_survivorship_bias_in_a_closed_loan_filter`, which runs against the synthetic generator specifically because the generator reproduces the bias by censoring default timing against a snapshot - the same mechanism as the real data, rather than a hard-coded biased label distribution.
 
 Whether a *run* applies the embargo is tested one level up, in `tests/test_pipeline.py`, because for the whole of this project's history until now the answer was no: the function was written, documented, and tested, and `pipeline.py` did not call it.

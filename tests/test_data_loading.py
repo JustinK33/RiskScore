@@ -10,6 +10,8 @@ import pytest
 
 from risk_score.data_loading import (
     CLOSED_LOAN_STATUSES,
+    DEFAULT_STATUSES,
+    PAID_STATUSES,
     apply_outcome_maturity_embargo,
     create_default_target,
     filter_to_closed_loans,
@@ -153,6 +155,22 @@ def test_create_default_target_maps_terminal_statuses() -> None:
     # default" is the survivorship mistake the embargo exists to prevent.
     assert result.tolist()[:3] == [0, 1, 1]
     assert result.isna().tolist() == [False, False, False, True, True]
+
+
+def test_the_two_outcome_vocabularies_are_disjoint() -> None:
+    """No status is both a default and a repayment.
+
+    `create_default_target` assigns 1 then 0 over an NA-filled Series, so a status
+    appearing in both sets would resolve by line order - a silent relabelling on
+    the next edit to either constant. Both are also lowercased, because that is
+    what the lookup compares against.
+    """
+    assert DEFAULT_STATUSES.isdisjoint(PAID_STATUSES)
+    assert all(status == status.lower() for status in DEFAULT_STATUSES | PAID_STATUSES)
+    # Every terminal status has an outcome. A member of the closed-loan filter that
+    # is in neither vocabulary would pass the filter and then be dropped as NA,
+    # losing rows with no count anywhere.
+    assert {status.lower() for status in CLOSED_LOAN_STATUSES} == DEFAULT_STATUSES | PAID_STATUSES
 
 
 def test_p02_create_default_target_returns_a_series_not_a_frame_copy() -> None:

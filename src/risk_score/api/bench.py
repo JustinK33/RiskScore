@@ -102,6 +102,11 @@ def measure(
     """
     if calls < 1:
         raise ValueError(f"calls must be at least 1, got {calls}.")
+    # A negative warmup clamps rather than raising, unlike `calls`, and the
+    # asymmetry is deliberate: `warmup=0` is a legitimate request - it is how you
+    # measure the cold path - so a negative value has an obvious intended meaning.
+    # `calls=0` has none, and returning percentiles over an empty sample would be
+    # an IndexError three frames later.
     for _ in range(max(warmup, 0)):
         service.score(applicant, with_reasons=with_reasons, top_k=top_k)
 
