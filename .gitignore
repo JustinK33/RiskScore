@@ -35,16 +35,11 @@ data/sample/*
 data/cache/
 
 # Reports and artifacts
-# Generated run output is never committed; only the .gitkeep placeholders are.
-reports/figures/*
-!reports/figures/.gitkeep
-reports/metrics/*
-!reports/metrics/.gitkeep
-reports/models/*
-!reports/models/.gitkeep
-reports/runs/
-reports/registry.json
-reports/active_run.json
+# Every path under reports/ is generated - runs, the registry, the active-run
+# pointer, comparison.json - and `artifacts.py` creates the tree it needs, so one
+# rule covers the lot. Enumerating them let `comparison.json` land untracked-but-
+# stageable, and kept three empty directories alive from the pre-bundle layout.
+reports/
 outputs/
 mlruns/
 
