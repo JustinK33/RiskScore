@@ -61,13 +61,26 @@ export function setText(selectorOrNode, value) {
   node.textContent = value === null || value === undefined || value === "" ? MISSING : String(value);
 }
 
+/** The classes a column puts on every one of its cells, header included. */
+const cellClass = (column) =>
+  `${column.align === "right" ? "num" : ""} ${column.className || ""}`.trim();
+
 /**
  * A table from a column spec.
  *
- * `columns` entries are `{key, label, format, align, tone}`. `format` receives
- * the whole row, not just the cell, because a PSI cell's *colour* depends on the
- * band column beside it. `tone` names a CSS custom property, so a highlighted
- * cell follows the theme.
+ * `columns` entries are `{key, label, format, align, tone, render, className}`.
+ * `format` receives the whole row, not just the cell, because a PSI cell's
+ * *colour* depends on the band column beside it. `tone` names a CSS custom property, so a
+ * highlighted cell follows the theme.
+ *
+ * `render(row)` returns child nodes instead of text, for a cell whose content is
+ * a bar rather than a number. It exists so that a table with a bar column is
+ * still this one table renderer - the alternative was a second hand-built
+ * `<table>` that would drift from this one on scopes, tones, and the empty state.
+ *
+ * `className` lands on the column's header cell as well as its body cells, because
+ * under `table-layout: fixed` it is the *first row* that decides column widths, so a
+ * width applied only to the body cells is ignored.
  *
  * An empty `rows` renders the `empty` message inside the table rather than
  * leaving a headed table with no body, which reads as a loading state that never
@@ -84,7 +97,7 @@ export function renderTable(columns, rows, { caption = "", empty = "No rows.", c
           // `scope` is what lets a screen reader announce "AUC ROC: 0.683" rather
           // than reading a grid of unattached numbers.
           attrs: { scope: "col" },
-          className: column.align === "right" ? "num" : "",
+          className: cellClass(column),
         }),
       ),
     ),
@@ -108,18 +121,24 @@ export function renderTable(columns, rows, { caption = "", empty = "No rows.", c
             "tr",
             {},
             columns.map((column, index) => {
-              const text = column.format ? column.format(row) : row[column.key];
               const tone = column.tone?.(row);
               const props = {
-                textContent: text === null || text === undefined || text === "" ? MISSING : String(text),
-                className: column.align === "right" ? "num" : "",
+                className: cellClass(column),
                 style: tone ? { color: `var(--${tone})` } : null,
               };
+              let children = [];
+              if (column.render) {
+                children = column.render(row);
+              } else {
+                const text = column.format ? column.format(row) : row[column.key];
+                props.textContent =
+                  text === null || text === undefined || text === "" ? MISSING : String(text);
+              }
               // The first column is the row's header, so a screen reader can say
               // which row a cell belongs to.
               return index === 0
-                ? el("th", { ...props, attrs: { scope: "row" } })
-                : el("td", props);
+                ? el("th", { ...props, attrs: { scope: "row" } }, children)
+                : el("td", props, children);
             }),
           ),
         ),

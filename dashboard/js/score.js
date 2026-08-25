@@ -293,7 +293,7 @@ export function renderPrediction(prediction) {
     ]),
     reasons.length === 0
       ? null
-      : el("table", { className: "data-table reason-table" }, [
+      : el("table", { className: "data-table reason-table feature-rows" }, [
           el("caption", {
             textContent: `Top ${reasons.length} drivers, as exact log-odds contributions`,
           }),

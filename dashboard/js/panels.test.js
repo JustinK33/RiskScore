@@ -5,13 +5,14 @@
  * `scripts/probe_dashboard.mjs`. `embargoRows` is here because it is the one piece
  * of panel logic that decides something rather than formatting it: whether a
  * vintage was *removed* or merely absent, which is the difference between drawing
- * no bar and drawing a default rate of zero.
+ * no bar and drawing a default rate of zero. `importanceRows` is here for the same
+ * reason: it decides which features get no bar at all.
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { embargoRows } from "./panels.js";
+import { embargoRows, importanceRows } from "./panels.js";
 
 /** The live run's own figures, so the fixture cannot drift from reality. */
 const EMBARGO = {
@@ -79,4 +80,67 @@ test("a non-numeric rate is dropped rather than plotted as NaN", () => {
 
   assert.equal(rows[0].before, null);
   assert.equal(rows[0].after, null);
+});
+
+/** The live run's top three and its one zero-weight feature. */
+const SHAP = {
+  features: {
+    feature: ["credit_utilization", "fico_midpoint", "loan_to_income_ratio", "term"],
+    label: ["Revolving utilization.", "FICO midpoint.", "Principal over income.", "Loan term."],
+    mean_abs_log_odds: [0.4594175382323515, 0.2712011441288449, 0.0021961959380983, 0.0],
+    mean_log_odds: [0.012209866866249, 0.016771379982513, 0.0003039346708774, 0.0],
+    columns: [2, 2, 2, 2],
+    rank: [1, 2, 3, 4],
+  },
+};
+
+test("bar widths are relative to the largest magnitude, not to their sum", () => {
+  const rows = importanceRows(SHAP);
+
+  assert.equal(rows[0].width, 100);
+  // 0.2712 / 0.4594 = 59.0%. Against the sum of the four it would be 36%, which
+  // would make the second-strongest driver of the book look like a third of one.
+  assert.equal(Number(rows[1].width.toFixed(1)), 59.0);
+});
+
+test("a magnitude too small to see gets the 2% floor", () => {
+  const rows = importanceRows(SHAP);
+
+  // 0.0022 / 0.4594 is 0.48% - under half a pixel in a 100px column.
+  assert.equal(rows[2].width, 2);
+});
+
+test("a feature with exactly zero weight gets no bar at all", () => {
+  const rows = importanceRows(SHAP);
+
+  // The one case the floor must not apply to: a visible sliver would claim `term`
+  // contributes something, when the split restricts the book to a single term.
+  assert.equal(rows[3].magnitude, 0);
+  assert.equal(rows[3].width, 0);
+});
+
+test("the signed mean is kept separate from the magnitude", () => {
+  const rows = importanceRows(SHAP);
+
+  // Same feature, an order of magnitude apart: reading the magnitude as the
+  // direction is the usual way an importance chart gets misused.
+  assert.equal(rows[0].magnitude, 0.4594175382323515);
+  assert.equal(rows[0].direction, 0.012209866866249);
+});
+
+test("no SHAP summary yields no rows rather than throwing", () => {
+  assert.deepEqual(importanceRows(undefined), []);
+  assert.deepEqual(importanceRows({}), []);
+});
+
+test("a missing magnitude is null rather than zero, and draws no bar", () => {
+  const rows = importanceRows({
+    features: { feature: ["x"], mean_abs_log_odds: [null], mean_log_odds: [null] },
+  });
+
+  // `Number(null)` is 0, so a null magnitude would otherwise be indistinguishable
+  // from a feature the model measured and gave no weight.
+  assert.equal(rows[0].magnitude, null);
+  assert.equal(rows[0].direction, null);
+  assert.equal(rows[0].width, 0);
 });

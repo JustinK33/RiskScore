@@ -30,6 +30,9 @@ const PORT = 9333;
 const WIDTHS = [320, 520, 768, 900, 1024, 1440];
 const THEMES = ["light", "dark"];
 
+/** The breakpoint below which app.css drops both bar columns. Keep the two in step. */
+const NARROW_BAR_WIDTH = 640;
+
 const CHROME =
   process.env.CHROME ||
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -80,6 +83,14 @@ const PROBE = `(() => {
     detailRows: document.querySelectorAll("#runDetails .def").length,
     embargoFacts: document.querySelectorAll("#embargoFacts .def").length,
     featurePsiRows: document.querySelectorAll("#featurePsi tbody tr").length,
+    importanceRows: document.querySelectorAll("#importanceTable tbody tr").length,
+    // The bar column is the only cell on the page whose content is a node rather
+    // than text, so it is the one that a change to renderTable would silently
+    // empty. A row with a bar of zero width is legitimate - a feature the model
+    // gave no weight - so the assertion is on the count, not on every row.
+    importanceBars: [...document.querySelectorAll("#importanceTable .bar")].filter(
+      (bar) => bar.getBoundingClientRect().width >= 1,
+    ).length,
     artifacts: document.querySelectorAll("#artifactLinks a").length,
     tables: [...document.querySelectorAll(".data-fallback table")].map(
       (t) => t.querySelectorAll("tbody tr").length,
@@ -276,6 +287,16 @@ try {
       // One row is the "No rows." placeholder, so anything under two is an empty
       // table wearing a header.
       if (report.featurePsiRows < 2) problems.push("the feature PSI table is empty");
+      if (report.importanceRows < 2) problems.push("the feature importance table is empty");
+      // The bar column is dropped below 640px, deliberately, so its absence there is
+      // the expected reading rather than a failure - and its presence would be the
+      // 250px of overflow the tornado column taught us to avoid.
+      if (width > NARROW_BAR_WIDTH && report.importanceBars < 2) {
+        problems.push("the importance table drew no bars");
+      }
+      if (width <= NARROW_BAR_WIDTH && report.importanceBars > 0) {
+        problems.push(`${report.importanceBars} importance bar(s) survived the narrow layout`);
+      }
       if (report.tables.some((rows) => rows === 0)) problems.push("an empty fallback table");
       if (report.scoreFields < 4) problems.push(`${report.scoreFields} score fields, want the schema's`);
       if (report.scoreSelects < 1) problems.push("no categorical rendered as a select");
@@ -292,6 +313,7 @@ try {
           `scroll=${report.scrollWidth} bg=${report.background} ` +
           `canvas=${report.canvases.map((c) => c.cssWidth).join("/")} ` +
           `tables=${report.tables.join("/")} psi=${report.featurePsiRows}r ` +
+          `imp=${report.importanceRows}r/${report.importanceBars}b ` +
           `score=${report.scoreFields}f/${report.scoreGroups}g/${report.scoreSelects}s ` +
           `verdict=${report.verdict || "none"}/${report.reasonRows}r ` +
           `banners=${report.banners.length}`,

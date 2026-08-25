@@ -596,6 +596,25 @@ main {
   grid-row: 1 / span 2;
 }
 
+/*
+ * A `.panel-grid` whose first column holds one panel rather than two.
+ *
+ * Without this the side panel's `span 2` creates an implicit second row, and the
+ * grid's `gap` is applied below it - 24px of empty space that pushes the next
+ * section heading further down than every other section's.
+ *
+ * Inside a min-width query, and that is not decoration. The single-column rule at
+ * 900px resets `grid-row` to `auto`, but `.panel-grid.one-row .side-panel` outranks
+ * a bare `.side-panel` on specificity no matter which comes later in the file - so
+ * unguarded, this pinned the aside to row 1 of the stacked layout and it rendered
+ * *above* the table it annotates.
+ */
+@media (min-width: 901px) {
+  .panel-grid.one-row .side-panel {
+    grid-row: 1;
+  }
+}
+
 .side-panel dl {
   display: grid;
   gap: var(--space-3);
@@ -809,7 +828,15 @@ main {
   vertical-align: middle;
 }
 
-.reason-table th[scope="row"] {
+/*
+ * A table whose row header is a feature name over its one-line description.
+ *
+ * Shared by the per-applicant reason codes and the global importance table, because
+ * without the two `display: block`s the identifier and its sentence run together as
+ * `credit_utilizationRevolving utilization as a fraction`, and without the weight
+ * reset the sentence inherits the `<th>`'s bold and reads as part of the name.
+ */
+.feature-rows th[scope="row"] {
   white-space: normal;
   /* The feature name is a snake_case identifier in a monospace font, so it offers no
      break opportunity: `credit_history_months` alone sets a 180px min-content width
@@ -817,17 +844,35 @@ main {
   overflow-wrap: anywhere;
 }
 
-.reason-table th[scope="row"] code {
+.feature-rows th[scope="row"] code {
   display: block;
   font-size: var(--text-base);
 }
 
-/* A `<th>` inherits the table's bold; the label is prose about the feature, not part
-   of its name, so it is reset to body weight here rather than relying on `.hint`. */
-.reason-table th[scope="row"] .hint {
+.feature-rows th[scope="row"] .hint {
   display: block;
   margin-top: 2px;
   font-weight: 400;
+}
+
+/*
+ * The bar column's width, and the reason it needs one.
+ *
+ * The bar is an empty `<div>` at a percentage width, so its cell has a min-content
+ * width of zero: with nothing declared, `table-layout: auto` gave the column the
+ * narrowest slice it could and every bar then measured within a pixel of every
+ * other - a magnitude chart in which 0.46 and 0.27 looked identical.
+ *
+ * `min-width` with a percentage, the same pair `.tornado-cell` uses, rather than
+ * `table-layout: fixed` and five declared columns. Fixed layout was tried and is
+ * wrong here: it makes the declared widths authoritative, and at 320px 16% is 40px,
+ * which `+0.0122` cannot break and so overflowed the *document* by 2px.
+ */
+.importance-table .magnitude-cell {
+  min-width: 140px;
+  /* 22% and not the tornado column's 30%: this table's row header carries a full
+     sentence of description, and a wider bar column costs the description a line. */
+  width: 22%;
 }
 
 /* A share rather than a fixed width, so the plot scales with the panel while the
@@ -871,6 +916,14 @@ main {
   background: var(--warn);
 }
 
+/* Global importance is a magnitude, so it has no direction to encode. Blue rather
+   than the accent green, because `--ok` and `--accent` are the same colour and a
+   green bar here would read as "this feature lowers risk" - which is the direction
+   column's job, and often says the opposite. */
+.bar-neutral {
+  background: var(--chart-series-2);
+}
+
 /*
  * Below 640px the tornado column is dropped rather than scrolled.
  *
@@ -883,14 +936,23 @@ main {
  */
 @media (max-width: 640px) {
   .reason-table .tornado-cell,
-  .reason-table .tornado-head {
+  .reason-table .tornado-head,
+  /* Same reasoning as the tornado column: the bar is a second encoding of the
+     number in the column beside it, so dropping it below 640px costs nothing that
+     a sideways-scrolling table would not cost more. The encoded-column count goes
+     with it, because five columns left the feature name 130px and it broke as
+     `credit_uti / lization`. */
+  .importance-table .magnitude-cell,
+  .importance-table .columns-cell {
     display: none;
   }
 
   /* The label is a full sentence, so it has to be allowed to wrap here even though
      every other table on the page is `nowrap`. */
   .reason-table td,
-  .reason-table th {
+  .reason-table th,
+  .importance-table td,
+  .importance-table th {
     white-space: normal;
     padding: var(--space-2);
   }

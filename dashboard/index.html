@@ -265,6 +265,35 @@
         </aside>
       </section>
 
+      <h2 class="section-heading" id="importanceHeading">What drives the score</h2>
+      <p class="section-note">
+        Mean absolute SHAP contribution per source feature, measured on the training sample and
+        expressed in log-odds. One-hot columns are collapsed back onto the feature they came from,
+        so <code>addr_state</code> appears once rather than as seventeen separate levels. These are
+        the model's drivers in general; the panel below gives them for one applicant.
+      </p>
+      <section class="panel-grid one-row" aria-labelledby="importanceHeading">
+        <section class="panel table-panel" aria-labelledby="importanceTableHeading">
+          <div class="panel-header">
+            <div>
+              <h2 id="importanceTableHeading">Feature importance</h2>
+              <p>
+                Magnitude is how far a feature moves a score in either direction. Average direction
+                is the signed mean, which is a different question - a strong driver can average to
+                nearly zero by pushing half the book up and half down.
+              </p>
+            </div>
+          </div>
+          <div id="importanceTable"></div>
+        </section>
+
+        <aside class="panel side-panel" aria-labelledby="importanceFactsHeading">
+          <h2 id="importanceFactsHeading">Attribution</h2>
+          <dl id="importanceFacts"></dl>
+          <p class="hint" id="importanceNote"></p>
+        </aside>
+      </section>
+
       <h2 class="section-heading" id="scoreHeading">Score an applicant</h2>
       <p class="section-note">
         Posts to <code>POST /predict</code> - the same endpoint and the same loaded bundle a

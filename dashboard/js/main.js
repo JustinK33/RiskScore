@@ -27,6 +27,7 @@ import {
   getModel,
   getRun,
   getRuns,
+  getShapSummary,
   getThresholdCosts,
   getVintages,
   invalidate,
@@ -49,7 +50,9 @@ import {
   drawScorePsi,
   drawThresholdCosts,
   drawVintages,
+  featureImportanceTable,
   featurePsiTable,
+  importanceRows,
 } from "./panels.js";
 import { mountScorePanel } from "./score.js";
 
@@ -71,6 +74,7 @@ let state = {
   thresholdCosts: null,
   vintages: null,
   drift: null,
+  shap: null,
   runs: [],
   problems: [],
 };
@@ -126,7 +130,7 @@ async function load(runId = null) {
 
   // `allSettled`, not `all`: a run predating a given report should show every
   // panel it can. The rejected ones are collected and named in the banner.
-  const [model, runs, manifest, metrics, calibration, thresholdCosts, vintages, drift] =
+  const [model, runs, manifest, metrics, calibration, thresholdCosts, vintages, drift, shap] =
     await Promise.allSettled([
       getModel(),
       getRuns(),
@@ -136,6 +140,7 @@ async function load(runId = null) {
       getThresholdCosts(runId),
       getVintages(runId),
       getDrift(runId),
+      getShapSummary(runId),
     ]);
 
   // Unwrapped exactly once each, because `value` records a failure as a side
@@ -160,6 +165,7 @@ async function load(runId = null) {
     thresholdCosts: value(thresholdCosts, "threshold costs"),
     vintages: value(vintages, "vintages"),
     drift: value(drift, "drift"),
+    shap: value(shap, "SHAP summary"),
     runs: history?.runs || [],
     problems,
   };
@@ -176,6 +182,7 @@ function render() {
   renderRunDetails();
   renderEmbargoFacts();
   renderDrift();
+  renderImportance();
   renderArtifacts();
   renderSanity();
   redraw();
@@ -445,6 +452,59 @@ function renderDrift() {
     unstable.length
       ? `${unstable.join(", ")} moved enough to warrant a retrain before this model is relied on.`
       : "No feature moved past 0.25 between the two partitions, so the population the model was fitted on is the population it was measured on.",
+  );
+}
+
+/**
+ * The importance table and the facts beside it.
+ *
+ * The strongest categorical is called out separately because it is the visible
+ * proof that the one-hot families were collapsed: `addr_state` ranking sixth as one
+ * feature is a different claim from fifty state levels each ranking near the bottom,
+ * and the collapse is the part of this report most likely to break silently.
+ *
+ * Which features are categorical is read from the manifest rather than inferred from
+ * the column count, even though every numeric feature happens to expand to exactly
+ * two columns here. That is a property of the current preprocessor, not a fact about
+ * the data, and a report that quietly depends on it would start lying the first time
+ * a numeric feature gained a binned encoding.
+ */
+function renderImportance() {
+  const node = $("#importanceTable");
+  if (node) {
+    replaceChildren(node, state.shap ? featureImportanceTable(state.shap) : []);
+  }
+
+  const rows = importanceRows(state.shap);
+  const categorical = new Set(state.manifest?.features?.categorical || []);
+  const strongestCategorical = rows.find((row) => categorical.has(row.feature));
+  // Zero, not "small": these are the features the fitted model gave no weight at
+  // all, which is a different finding from a weak one and usually means the column
+  // was constant across the training window.
+  const inert = rows.filter((row) => row.magnitude === 0).map((row) => row.feature);
+
+  replaceChildren($("#importanceFacts"), [
+    definition(
+      "Top driver",
+      rows.length ? `${rows[0].feature} (${number(rows[0].magnitude, 4)})` : null,
+    ),
+    definition(
+      "Strongest categorical",
+      strongestCategorical
+        ? `${strongestCategorical.feature} (rank ${count(strongestCategorical.rank)})`
+        : null,
+    ),
+    definition("Features ranked", rows.length ? count(rows.length) : null),
+    definition(
+      "Encoded columns",
+      rows.length ? count(rows.reduce((total, row) => total + (Number(row.columns) || 0), 0)) : null,
+    ),
+  ]);
+  setText(
+    "#importanceNote",
+    inert.length
+      ? `${count(inert.length)} feature${inert.length > 1 ? "s" : ""} carried no weight at all: ${inert.join(", ")}. A feature scores exactly zero when it takes one value across the whole training window, so that is a fact about the split rather than about the feature.`
+      : "Every feature in the tier carried some weight on the training sample.",
   );
 }
 

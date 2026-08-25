@@ -33,7 +33,7 @@ import {
   palette,
   prepareCanvas,
 } from "./charts.js";
-import { renderTable } from "./dom.js";
+import { el, renderTable } from "./dom.js";
 import {
   count,
   isMissing,
@@ -692,6 +692,109 @@ export function featurePsiTable(payload, { reference = "reference", comparison =
     {
       caption: `Population stability index per feature, ${reference} against ${comparison}, worst first`,
       empty: "No per-feature drift report for this run.",
+    },
+  );
+}
+
+/**
+ * Global feature importance as a table with a bar column, not a canvas.
+ *
+ * A deliberate departure from the rest of this file. Twenty feature names, the
+ * longest of them `credit_history_months`, do not fit on a horizontal axis at any
+ * width this page has to support, and a horizontal bar chart on a canvas would
+ * spend half of a 254px plot on the labels. As DOM the bars reflow, the names wrap,
+ * the numbers are already the accessible alternative, and no `<details>` fallback
+ * is needed because the picture and the table are the same object.
+ *
+ * `mean_abs_log_odds` is the magnitude - how much this feature moves a score,
+ * regardless of direction. `mean_log_odds` is the signed average, which is a
+ * different question: a feature can be the strongest driver in the book and still
+ * average to nearly zero, because it pushes half the applicants up and half down.
+ * Both are shown, because reading the first as if it were the second is the usual
+ * way a feature-importance chart gets misused.
+ */
+export function importanceRows(payload) {
+  const rows = toRows(payload?.features || {});
+  // Relative to the largest magnitude in the set, not to their sum. These are mean
+  // absolute contributions and do not add up to anything meaningful, so a share-of-
+  // total scale would be a number with no referent.
+  const largest = rows.reduce(
+    (most, row) => Math.max(most, Math.abs(Number(row.mean_abs_log_odds) || 0)),
+    0,
+  );
+  return rows.map((row) => {
+    const magnitude = isMissing(row.mean_abs_log_odds) ? null : Number(row.mean_abs_log_odds);
+    const direction = isMissing(row.mean_log_odds) ? null : Number(row.mean_log_odds);
+    return {
+      ...row,
+      magnitude,
+      direction,
+      // A feature the model gave exactly zero weight gets no bar at all. That is
+      // the one case where a floor would lie: `term` is 0.0 in the live run
+      // because the split restricts the book to a single term, and a visible
+      // sliver there would suggest it contributes something.
+      width: !magnitude || largest === 0 ? 0 : Math.max(2, (magnitude / largest) * 100),
+    };
+  });
+}
+
+/** The importance table. Returns a node, like `featurePsiTable`. */
+export function featureImportanceTable(payload) {
+  const rows = importanceRows(payload);
+  return renderTable(
+    [
+      {
+        key: "feature",
+        label: "Feature",
+        // The docstring from the data dictionary, carried through the API, so the
+        // reader does not have to guess what `dti_clean` was cleaned of.
+        render: (row) => [
+          el("code", { textContent: row.feature }),
+          el("small", { className: "hint", textContent: row.label || "" }),
+        ],
+      },
+      {
+        key: "mean_abs_log_odds",
+        label: "Mean |log-odds|",
+        align: "right",
+        format: (row) => number(row.magnitude, 4),
+      },
+      {
+        key: "bar",
+        label: "Magnitude",
+        className: "magnitude-cell",
+        render: (row) =>
+          row.width === 0
+            ? []
+            : [el("div", { className: "bar bar-neutral", style: { width: `${row.width}%` } })],
+      },
+      {
+        key: "mean_log_odds",
+        label: "Average direction",
+        align: "right",
+        format: (row) => signed(row.direction, 4),
+        // Green for a feature that lowers risk on average, warm for one that raises
+        // it, matching the reason-code bars in the score panel. The sign is in the
+        // text as well, so the colour is a second encoding.
+        tone: (row) => (row.direction === null || row.direction === 0 ? null : row.direction > 0 ? "warn" : "ok"),
+      },
+      {
+        key: "columns",
+        label: "Columns",
+        align: "right",
+        // Classed so the narrow layout can drop it: how many transformed columns a
+        // feature expands into is an encoding detail, and it is the first thing worth
+        // giving up for room to print `credit_utilization` without breaking it.
+        className: "columns-cell",
+        format: (row) => count(row.columns),
+      },
+    ],
+    rows,
+    {
+      caption:
+        "Mean absolute SHAP contribution per source feature on the training sample, largest first",
+      empty: "No SHAP summary for this run.",
+      classes: "importance-table feature-rows",
     },
   );
 }
