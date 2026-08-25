@@ -24,7 +24,7 @@
 
 import { getSchema, predict } from "./api.js";
 import { el, replaceChildren, setBanner } from "./dom.js";
-import { labelize, number, percent } from "./format.js";
+import { labelize, measure, number, percent } from "./format.js";
 
 /**
  * A plausible applicant, for the demo button.
@@ -230,6 +230,32 @@ export function reasonBars(reasons) {
   });
 }
 
+/** The one-hot level standing for an absent field. Named by `risk_score.transformers`. */
+const MISSING_CATEGORY = "__missing__";
+
+/**
+ * What the value column shows for a reason.
+ *
+ * `__missing__` is the encoder's name for "this field was absent", so printing it
+ * verbatim shows an applicant a modelling artefact and reads as a bug. It matters
+ * here more than it looks: missingness is genuinely predictive, so an unfilled
+ * field is often the *top* driver - on the real-data bundle `verification_status`
+ * with no value contributes +0.34 and ranks second.
+ *
+ * It was also 6px of horizontal document overflow at 320px, because eleven
+ * characters of monospace with no break opportunity set the column's min-content
+ * width. `not provided` breaks at its space.
+ */
+export function reasonValue(value) {
+  const absent = value === null || value === undefined || value === "" || value === MISSING_CATEGORY;
+  if (absent) return "not provided";
+  // Numbers go through `measure`, text through `String`. An engineered feature is
+  // a division result, so `loan_to_income_ratio` arrives as 0.24193548387096775
+  // and a reason code claiming seventeen significant digits of an applicant's
+  // finances is a precision the model never had.
+  return Number.isFinite(Number(value)) ? measure(value) : String(value);
+}
+
 function reasonRow(reason) {
   const bar = el("div", {
     className: `bar ${reason.increases ? "bar-up" : "bar-down"}`,
@@ -240,7 +266,7 @@ function reasonRow(reason) {
       el("code", { textContent: reason.feature }),
       el("small", { className: "hint", textContent: reason.label }),
     ]),
-    el("td", { className: "num", textContent: String(reason.value ?? "-") }),
+    el("td", { className: "num", textContent: reasonValue(reason.value) }),
     // Two half-width tracks with the bar growing outward from the centre, so
     // "reduces risk" reads left and "increases risk" reads right at a glance.
     //

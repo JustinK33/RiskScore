@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { coerce, EXAMPLE_APPLICANT, reasonBars } from "./score.js";
+import { coerce, EXAMPLE_APPLICANT, reasonBars, reasonValue } from "./score.js";
 
 const numeric = { name: "annual_inc", kind: "numeric" };
 const categorical = { name: "home_ownership", kind: "categorical" };
@@ -97,4 +97,32 @@ test("the example uses month-precision dates, which is a format the parser accep
   // into the control and the field would silently render blank.
   assert.match(EXAMPLE_APPLICANT.issue_d, /^\d{4}-\d{2}$/);
   assert.match(EXAMPLE_APPLICANT.earliest_cr_line, /^\d{4}-\d{2}$/);
+});
+
+test("an absent field reads as words, not as the encoder's sentinel", () => {
+  // Missingness is predictive, so an unfilled field is often the top-ranked
+  // reason. Showing `__missing__` there presents a modelling artefact as if the
+  // applicant had typed it.
+  assert.equal(reasonValue("__missing__"), "not provided");
+  assert.equal(reasonValue(null), "not provided");
+  assert.equal(reasonValue(undefined), "not provided");
+  assert.equal(reasonValue(""), "not provided");
+});
+
+test("a real value is shown as itself, including a falsy zero", () => {
+  assert.equal(reasonValue("RENT"), "RENT");
+  assert.equal(reasonValue(" 36 months"), " 36 months");
+  // `0` is a measurement, not an absence: `inq_last_6mths` of 0 is meaningful and
+  // a `||` fallback would have printed "not provided" for it.
+  assert.equal(reasonValue(0), "0");
+});
+
+test("a raw ratio is cut to readable precision, and an integer keeps none", () => {
+  // The engineered features are divisions, so this is what the API actually sends.
+  assert.equal(reasonValue(0.24193548387096775), "0.2419");
+  assert.equal(reasonValue(9), "9");
+  assert.equal(reasonValue(0.625), "0.625");
+  // A numeric string is still a number: the form posts strings and some fields
+  // round-trip that way.
+  assert.equal(reasonValue("0.24193548387096775"), "0.2419");
 });

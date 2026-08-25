@@ -29,7 +29,7 @@ The Dockerfile would grow a Node stage for a directory that ships eleven text fi
 
 **The interesting logic is pure, and pure logic does not need a browser to test.**
 Ticks, formatting, embargo row diffing, comparison deltas, importance bar widths, PSI banding, reason-code scaling, job status lines - all of it is data in, data out.
-`node --test` runs 101 tests over those functions in under a second with zero dependencies installed.
+`node --test` runs 104 tests over those functions in under a second with zero dependencies installed.
 The parts that genuinely need a browser (does the grid reflow at 390px, does the file picker look right) are checked by `scripts/probe_dashboard.mjs` driving real Chrome over CDP, which a jsdom-based test runner could not have answered anyway.
 
 ## Decision
@@ -86,7 +86,7 @@ Python has `ruff format` in CI; JS does not, and a formatter is the one dependen
 
 **Resize is free.** `api.js` caches parsed payloads in memory, so `observeResize` → `redraw()` re-renders from cache and issues zero requests. This is a property of owning the fetch layer; it is achievable with a library, but not by default.
 
-**`node --test` is fast enough to run on every commit.** 101 tests, no install, no transpile, no jsdom boot. The reason those tests exist at all is that they cost nothing to run.
+**`node --test` is fast enough to run on every commit.** 104 tests, no install, no transpile, no jsdom boot. The reason those tests exist at all is that they cost nothing to run.
 
 **The probe is the only thing that catches layout regressions**, and it needs Chrome on the machine. CI runs the `node --test` suite; the probe is a local pre-commit tool. That is a real gap: a CSS change that breaks the 390px reflow would pass CI. Accepted, because the alternative is a headless-browser job and a screenshot baseline for a portfolio dashboard.
 

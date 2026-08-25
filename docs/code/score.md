@@ -26,6 +26,7 @@ Two more decisions.
 | `hint(field)` | The sentence under one control. |
 | `buildForm(schema)` | `{node, read, fill}`. The caller never touches an input directly. |
 | `reasonBars(reasons)` | Each reason plus `{increases, width}`. Widths relative to the largest contribution. |
+| `reasonValue(value)` | What the reason table's value column shows: `not provided`, a measured number, or the text. |
 | `renderPrediction(prediction)` | The verdict block and the reason-code table, as nodes. |
 | `mountScorePanel({form, body, banner, result, exampleButton, submitButton})` | Fetch the schema, build, wire submit. |
 
@@ -44,6 +45,14 @@ Tiers are ordered by `TIER_ORDER = ["timeline", "loan_request", "borrower", "len
 A tier not in the list sorts last rather than being dropped.
 
 ## Invariants and failure modes
+
+**A reason value the applicant did not supply says so in words.**
+`reasonValue` maps `__missing__` - the one-hot level `risk_score.transformers` uses for an absent field - to `not provided`, along with `null`, `undefined` and `""`.
+This matters more than a spelling choice, because missingness is genuinely predictive and an unfilled field is often the *top* reason: on the real-data bundle `verification_status` with no value contributes +0.34 and ranks second, so the encoder's sentinel was the second line a reader saw.
+
+**A numeric reason value is formatted, not stringified.**
+`measure` caps it at four decimals.
+Every engineered feature is a division, so `loan_to_income_ratio` arrives as `0.24193548387096775`, and nineteen characters of unbreakable digits was also 6px of horizontal document overflow at 320px - found by the probe only once a bundle trained on real data was activated.
 
 **A blank field is `undefined`, never `0` and never `null`.**
 `coerce` returns `undefined` for `""`, and `read()` omits those keys entirely.
@@ -140,7 +149,7 @@ Half a form built from a partial schema would submit a partial applicant.
 
 ## Related tests
 
-`dashboard/js/score.test.js`, 11 tests, over `coerce`, `reasonBars`, and `EXAMPLE_APPLICANT`.
+`dashboard/js/score.test.js`, 14 tests, over `coerce`, `reasonBars`, `reasonValue`, and `EXAMPLE_APPLICANT`.
 
 - The four `coerce` tests are the "absent is not zero" rule at the input boundary, mirroring `format.js`'s at the output boundary: `a blank field is absent, not zero`, `a numeric field becomes a number`, `a zero the user actually typed survives`, `an unparseable numeric is forwarded so the server can name the field`, and `a categorical keeps its exact case`.
 - The four `reasonBars` tests: `bars scale to the largest absolute contribution, not to their sum`, `a contribution too small to see still gets a visible mark`, `an all-zero set of reasons draws no bars rather than dividing by zero`, and `a missing log_odds is treated as no contribution, not as NaN`.

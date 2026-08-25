@@ -50,6 +50,7 @@ Speaks the Chrome DevTools Protocol over a WebSocket, using Node's built-in `fet
 `spawn` from `node:child_process` starts Chrome with `--headless=new` and a persistent profile at `/tmp/riskscore-probe-profile`.
 
 Reads the target server's `/readyz` once, before Chrome, to learn whether it will accept a retrain.
+That read is also the preflight: if nothing answers at the base URL the script stops there naming the URL and the command that starts a server, rather than launching Chrome and reporting fourteen assertion failures against a blank page.
 
 Writes one line per configuration to stdout, plus an indented line per problem.
 The line carries measurements even on success - `scroll=`, `bg=`, `canvas=`, `tables=`, `psi=`, `imp=`, `cmp=`, `wide=[]`, `score=`, `verdict=`, `retrain=`, `banners=` - so a clean run is still a reading, and a value drifting toward zero is visible before it becomes a failure.
@@ -76,6 +77,11 @@ Writing storage would test the toggle instead and would leave the media-query br
 **Overflow is attributed, with 1px of slack.**
 Every element in `body` gets its right edge compared to the document's `clientWidth`; the slack is there because a fractional layout width rounds up and is not a scrollbar.
 Offenders are sorted by how far out they are and the widest five are reported by selector.
+
+**An element inside a horizontally scrolling box is not an offender.**
+It cannot be what makes the *page* scroll, because the box swallows it, so any element with a clipping ancestor is skipped.
+This was learned from a wrong diagnosis: a real 6px document overflow at 320px was reported against the comparison table, 500px wider than its own `.table-scroll` and working exactly as intended, while the element actually 6px too wide was pushed off the five-offender list.
+Attribution that names an innocent element is worse than reporting no element at all.
 
 **Every `.table-scroll` is measured separately, and only at 900px and above.**
 A scroll box **contains** its own overflow, so the document-level check above is blind to a table whose last columns sit outside it - and macOS draws no scrollbar until something scrolls, so it is blind in a screenshot too.
@@ -147,11 +153,14 @@ It *is* the test - the top of the file says it is not a pytest test and says why
 
 What it cannot cover, and what covers that instead:
 
-- The pure helpers it exercises through the page have their own suites: `format.test.js` (19), `charts.test.js` (25), `api.test.js` (17), `panels.test.js` (20), `score.test.js` (11), `retrain.test.js` (9). 101 tests under `node --test`, run from `dashboard/`.
+- The pure helpers it exercises through the page have their own suites: `format.test.js` (19), `charts.test.js` (25), `api.test.js` (17), `panels.test.js` (20), `score.test.js` (14), `retrain.test.js` (9). 104 tests under `node --test`, run from `dashboard/`.
 - Every payload it reads is asserted server-side in `tests/test_api.py` and `tests/test_routes_admin.py`.
 - Keyboard traversal and the things a script cannot judge - a caption that wraps badly, a chip a pixel off its neighbour - are checked by hand at each width. The `prefers-reduced-motion` and `forced-colors` paths are not checked at all.
 
 Last full run: **all 12 configurations clean against both servers** - default flags on 8125 and both mutating routes enabled on 8126, so `expectRetrain` was exercised in both directions.
+
+It has since been run against a bundle trained on the real 1.1 GB extract rather than on synthetic data, which found two failures the synthetic run could not: reason values printed as `__missing__`, and a loan-to-income ratio printed as `0.24193548387096775`, whose nineteen unbreakable characters were 6px of document overflow at 320px.
+Real values are a test input, and this is the argument for activating a real run before probing.
 
 ## Known limits
 
@@ -161,5 +170,5 @@ Last full run: **all 12 configurations clean against both servers** - default fl
 - **Six widths, not a sweep.** A break at 641px between two sampled widths is invisible. A continuous sweep would be slow and would report the same failure many times.
 - **`deviceScaleFactor: 1`, `mobile: false`.** No retina bitmap check, no touch emulation, no `hover: none` media query. `prepareCanvas` handles a DPR of 2 and that path is unit-tested rather than probed.
 - **The profile at `/tmp/riskscore-probe-profile` persists.** Deliberate, so Chrome starts fast, and the reason `Network.setCacheDisabled` is not optional. It is also litter that nothing cleans up.
-- **The score probe needs a server with a loaded bundle.** Against a bundle-less service, `/readyz` fails, every panel is a dash, and the run fails at the first width with a status error - correct, but the diagnosis is "start the server properly" and the script does not say so.
+- **The score probe needs a server with a loaded bundle.** Nothing listening at all is now a single named error before Chrome starts, but a service that is *up* with no active run is not: `/readyz` answers, every panel is a dash, and the run fails at the first width with a status error. Correct, and still one diagnosis short of "run `riskscore activate` first".
 - **No timing assertions.** It never checks that a resize storm issues zero requests, which is `api.js`'s central claim and is verified by unit test and by hand in DevTools instead. `Network.requestWillBeSent` is already enabled and counting it would be a small addition.

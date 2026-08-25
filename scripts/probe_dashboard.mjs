@@ -59,11 +59,21 @@ const PROBE = `(() => {
   const doc = document.documentElement;
   const limit = doc.clientWidth;
   const offenders = [];
+  // An element inside a horizontally scrolling box cannot be what makes the *page*
+  // scroll, because the box swallows it. Listing those anyway buries the element
+  // that does: a 6px document overflow at 320px was reported against a comparison
+  // table 500px wider than its own \`.table-scroll\`, which is working as intended.
+  const clipped = (node) => {
+    for (let p = node.parentElement; p && p !== document.body; p = p.parentElement) {
+      if (getComputedStyle(p).overflowX !== "visible") return true;
+    }
+    return false;
+  };
   for (const node of document.querySelectorAll("body *")) {
     const rect = node.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) continue;
     // 1px of slack: a fractional layout width rounds up and is not a scrollbar.
-    if (rect.right > limit + 1) {
+    if (rect.right > limit + 1 && !clipped(node)) {
       offenders.push({
         selector: node.tagName.toLowerCase() + (node.id ? "#" + node.id : "") +
           (node.className && typeof node.className === "string"
@@ -339,9 +349,19 @@ async function waitForChrome() {
  * default server and *present* on one started with both flags, and "the panel is
  * missing" and "the panel is correctly switched off" are the same pixels.
  */
+const ready = await fetch(new URL("readyz", BASE)).catch((error) => {
+  // A base URL with nothing behind it used to be caught here and read as "no
+  // mutating routes", after which every assertion failed against a blank page: the
+  // output was fourteen lines about empty tables and absent panels, none of which
+  // was the problem. Nothing listening is one line, and it is this one.
+  throw new Error(
+    `Nothing is listening at ${BASE} (${error.message}). ` +
+      `Start the service first: riskscore serve --port ${new URL(BASE).port || "8000"}`,
+  );
+});
 const expectRetrain =
-  (await fetch(new URL("readyz", BASE))
-    .then((response) => response.json())
+  (await ready
+    .json()
     .then((body) => body.mutating_routes)
     .catch(() => "none")) === "both";
 

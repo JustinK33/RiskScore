@@ -396,7 +396,7 @@ The current numbers are lower and mean what they say.
 
 The three skips are XGBoost paths, skipped because `libomp` is not installed on this machine; the Linux CI job runs them.
 
-`node --test` from `dashboard/` passes 101 tests.
+`node --test` from `dashboard/` passes 104 tests.
 
 `ruff check .`, `ruff format --check .` over 122 files, and `mypy src tests scripts` over 59 files are all clean.
 

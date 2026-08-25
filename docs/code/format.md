@@ -19,6 +19,7 @@ It is pure - no DOM, no imports - so the "absent is not zero" rule is testable d
 | `isMissing(value)` | True for `null`, `undefined`, `""`, any non-number-non-string type, and any non-finite number. |
 | `number(value, digits = 3)` | Fixed-digit decimal. |
 | `percent(value, digits = 1)` | Scales by 100 and appends `%`. |
+| `measure(value, digits = 4)` | A raw input value: grouped, at most `digits` decimals. |
 | `count(value)` | Grouped integer, no decimals. |
 | `signed(value, digits = 3)` | Explicit `+` or `-`, and no signed zero. |
 | `cost(value)` | Grouped integer, unitless. |
@@ -43,6 +44,11 @@ Constructing one is expensive relative to formatting with it, and a full render 
 The locale is deliberately left `undefined` so grouping and the decimal separator follow the reader's browser.
 
 ## Invariants and failure modes
+
+**`measure` caps its decimals where `number` pins them, and that is the whole reason it exists.**
+`number(9, 3)` is `9.000`, which is right for a metric and wrong for an applicant's `open_acc`.
+`measure` sets `maximumFractionDigits` and no minimum, so `9` stays `9` and `0.24193548387096775` becomes `0.2419`.
+The seventeen-digit case is not hypothetical: every engineered feature is a division, so that is exactly what `/predict` returns for `loan_to_income_ratio`, and printing it raw was both a claim of precision the model never had and 6px of horizontal document overflow at 320px.
 
 **`isMissing` checks the type before it checks the value, and that order is load-bearing.**
 `Number([])` is `0`, `Number(true)` is `1`, `Number(null)` is `0`, and `Number(" ")` is `0`.

@@ -246,7 +246,7 @@ dashboard/index.html
          js/score.js         the score-an-applicant form, generated from /api/schema
          js/retrain.js       upload and job polling; mounts only if the routes are on
          js/main.js          wiring
-         js/*.test.js        node --test on the pure helpers - 101 tests, no npm install
+         js/*.test.js        node --test on the pure helpers - 104 tests, no npm install
 ```
 
 Fetched data is cached in memory, so a resize redraws from cache and issues **zero** network requests - which removes the double fetch, the out-of-order stale draw, and the swallowed `.catch(() => {})` in one move.

@@ -75,6 +75,21 @@ export function percent(value, digits = 1) {
   return `${number(Number(value) * 100, digits)}%`;
 }
 
+/**
+ * A raw input value, at readable precision. `measure(0.24193548387096775)` -> `"0.2419"`.
+ *
+ * Distinct from `number` because the digit count here is a maximum rather than a
+ * fixed width: an applicant's `open_acc` is `9` and not `9.0000`, while their
+ * loan-to-income ratio is a division result that arrives with all seventeen digits
+ * IEEE 754 can hold. Printing that raw is not just ugly, it was 6px of horizontal
+ * document overflow at 320px, because a nineteen-character number offers a line
+ * breaker nothing to break on.
+ */
+export function measure(value, digits = 4) {
+  if (isMissing(value)) return MISSING;
+  return formatter({ maximumFractionDigits: digits }).format(Number(value));
+}
+
 /** A row count, grouped. `count(12000)` -> `"12,000"`. */
 export function count(value) {
   if (isMissing(value)) return MISSING;
