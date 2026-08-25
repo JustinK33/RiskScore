@@ -652,6 +652,10 @@ def comparison_payload(payloads: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
     deltas = []
+    # `dict.fromkeys` rather than `set` for order-preserving uniqueness: this list
+    # becomes `lender_priced_delta` in a committed JSON artifact, and a set would
+    # reorder it between runs on nothing but hash seeding, making two identical
+    # comparisons produce diffing files.
     for model_type in dict.fromkeys(table["model_type"]):
         excluded = by_variant.get((str(model_type), feature_tier(False)))
         included = by_variant.get((str(model_type), feature_tier(True)))

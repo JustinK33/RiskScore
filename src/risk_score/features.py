@@ -613,6 +613,11 @@ def model_feature_columns(*, include_lender_priced: bool = False) -> tuple[str, 
     allowed = set(MODELABLE_TIERS)
     if not include_lender_priced:
         allowed.discard(FeatureTier.LENDER_PRICED)
+    # The date exclusion is by parse kind, not by name. `earliest_cr_line` is the
+    # only one today, and naming it would mean the next date column added to a
+    # modelable tier reaches OneHotEncoder as 655 distinct strings - which is
+    # exactly how B01 happened the first time. A date is never a feature here; it
+    # is an input to one.
     return tuple(
         spec.name
         for spec in COLUMN_REGISTRY.values()

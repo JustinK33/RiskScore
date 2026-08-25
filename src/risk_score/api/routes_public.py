@@ -150,6 +150,11 @@ async def predict_batch(
     for (index, _), score in zip(valid, scores, strict=True):
         rows[index] = BatchRowOut(index=index, prediction=_prediction(score, service))
 
+    # Keyed by index and re-sorted rather than appended to a list, because the two
+    # loops above fill `rows` out of order: an invalid row is written in the first
+    # pass and a valid one in the second. The response has to come back in request
+    # order regardless - a caller pairs row 407 of the response with row 407 of
+    # what it sent, and `BatchRowOut.index` is a check on that, not a substitute.
     ordered = [rows[index] for index in sorted(rows)]
     return BatchOut(
         rows=ordered,
