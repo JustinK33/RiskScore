@@ -80,6 +80,20 @@ Every file here may import the library; nothing in the library imports these, wh
 `src/risk_score/api/__init__.py` has no page, on the same grounds as `src/risk_score/__init__.py`: it states the dependency direction above and re-exports two names.
 Its one load-bearing consequence - that importing it pulls fastapi in transitively, so `cli.py` must import it inside a handler - is documented where it constrains code, in [cli.md](cli.md) and [bench.md](bench.md).
 
+## The dashboard
+
+No npm, no bundler, no framework, no charting library - see [ADR 0009](../decisions/0009-vanilla-dashboard.md).
+The layering is enforced by import direction and readable from the import lines: `format` and `charts` and `dom` import nothing, `panels` imports those three, `main` imports everything and is the only file that fetches.
+
+| File | Page | One line |
+| --- | --- | --- |
+| `dashboard/js/format.js` | [format.md](format.md) | Absent is not zero. Every displayed number goes through here. |
+| `dashboard/js/dom.js` | [dom.md](dom.md) | The node primitives and the one table renderer. No `innerHTML` anywhere. |
+| `dashboard/js/charts.js` | [charts.md](charts.md) | Ticks, scales, measured text, and the theme reaching the canvas. |
+| `dashboard/js/api.js` | [api.md](api.md) | One error shape, one cache, one timeout. Why a resize costs nothing. |
+
+The `*.test.js` files have no pages of their own; each module's page names its tests under **Related tests**.
+
 ## Fixtures
 
 | File | Page | One line |
