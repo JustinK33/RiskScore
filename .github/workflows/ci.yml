@@ -62,10 +62,13 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - name: Confirm XGBoost actually imports
         run: python -c "import xgboost; print(xgboost.__version__)"
-      # The floor is a ratchet: it starts just under the measured 85% and is
+      # The floor is a ratchet: it sits just under the measured total and is
       # raised, never lowered, as phases land. A drop below it fails the build.
+      # Measured 96% locally with the three xgboost tests skipped, so the slack
+      # is for line-count churn rather than for the skips - this job installs
+      # libgomp1 above and therefore runs strictly more code than that reading.
       - name: pytest
-        run: pytest -q --cov --cov-report=term-missing --cov-fail-under=80
+        run: pytest -q --cov --cov-report=term-missing --cov-fail-under=94
 
   dashboard:
     name: Dashboard helpers

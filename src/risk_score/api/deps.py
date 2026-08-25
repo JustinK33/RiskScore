@@ -53,6 +53,9 @@ def get_applicant_model(request: Request) -> type[BaseModel]:
     actually score the request. Requesting it without a bundle is the same 503 as
     requesting the service, which is why this goes through :func:`get_service`.
     """
+    # Called for its 503, not its value. Reading `applicant_model` directly would
+    # answer 500 on a bundle-less service - the attribute is None - and a route that
+    # needs a schema needs a bundle, so it should fail the same way.
     get_service(request)
     model: type[BaseModel] = request.app.state.applicant_model
     return model
@@ -87,6 +90,9 @@ def require_api_key(
         )
 
 
+# Named aliases rather than `Annotated[...]` spelled out per handler. A signature
+# reading `service: ServiceDep` cannot pick up the wrong dependency by typo, and
+# when a dependency gains a check every route inherits it from one line.
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 ServiceDep = Annotated[ScoringService, Depends(get_service)]
 ApplicantModelDep = Annotated[type[BaseModel], Depends(get_applicant_model)]
