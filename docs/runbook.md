@@ -292,6 +292,23 @@ curl -s localhost:8000/api/jobs/$JOB -H "X-API-Key: $RISKSCORE_API_KEY" | jq
 | `status: "timed_out"` | It hit `RISKSCORE_JOB_TIMEOUT_SECONDS` and was killed. |
 | `404` on a job id | Unknown, or evicted from the 32-entry history. `riskscore runs` is the durable record. |
 
+### The same thing from the dashboard
+
+The retrain panel drives those three routes, so the flags above are what makes it appear at all.
+
+It requires **both** `RISKSCORE_ALLOW_UPLOAD=1` and `RISKSCORE_ALLOW_RETRAIN=1`, not either.
+The browser has no server-side `dataset_id` to name, so uploading is the only way it can produce one, and a retrain route with uploads off is reachable from the CLI and not from here.
+A form whose every submission returns 403 reads as a broken feature rather than a switched-off one, so with only one flag set the panel stays hidden.
+
+Then, in the page:
+
+1. Paste the API key into the key field and submit it once. It goes to `sessionStorage`, covers the upload, the start and every poll, and does not outlive the tab.
+2. Choose a CSV and a model. The model list comes from the service, not from the markup, so it cannot offer a model the service would reject.
+3. Submit. The panel polls `/api/jobs/{id}` and reports the stage; the page reloads onto the new run when the child exits successfully.
+
+Everything the panel can tell you is in the table above - it renders the same `detail` string.
+If the panel is absent while the routes work from `curl`, check `/readyz`: `mutating_routes` has to read `both`.
+
 Uploads accumulate under `RISKSCORE_DATASETS_DIR` (`data/uploads`) and nothing removes them.
 Delete them by hand; the content-addressed name means a re-upload just recreates the one you need.
 
