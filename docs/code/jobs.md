@@ -108,7 +108,7 @@ One guard on a filesystem path is one guard too few.
 
 ## Related tests
 
-`tests/test_jobs.py`, twenty-five tests, using stub children so the runner's own behaviour is testable without a ten-second fit per case.
+`tests/test_jobs.py`, using stub children for the runner's own behaviour so it is testable without a ten-second fit per case.
 `self.target` is injected for exactly that reason and production never passes it.
 
 - `test_a_second_submit_while_one_runs_is_refused` and `test_the_slot_is_released_once_the_child_finishes` are the single-flight contract.
@@ -116,6 +116,7 @@ One guard on a filesystem path is one guard too few.
 - `test_a_failing_callback_does_not_fail_the_job` pins the `only_if_running` rule.
 - `test_a_stream_that_breaks_midway_leaves_nothing` and `test_a_non_csv_upload_is_refused_after_streaming_and_leaves_nothing` are the cleanup guarantees; `test_a_size_cap_is_enforced_across_chunks` covers the cap on a body that declares nothing.
 - `test_a_symlinked_dataset_never_escapes_the_directory` is the second guard in `resolve_dataset`.
+- `test_the_real_child_reports_the_run_it_published` and `test_the_real_child_sends_the_failure_back_instead_of_raising` call `_child` directly, in-process. The end-to-end test below covers the same code spawned, where coverage.py cannot see it without subprocess instrumentation, and it never takes the failure branch - so the child read as untested while being the most consequential twenty lines here.
 - `tests/test_routes_admin.py::test_a_real_retrain_publishes_a_run_and_the_service_swaps_to_it` is the end-to-end proof: a real child, a real fit, a new run id, and a service that scores with the new bundle afterwards.
 
 ## Known limits

@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import os
 import time
+from multiprocessing import Pipe
 from multiprocessing.connection import Connection
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from risk_score.api.jobs import (
     JobRunner,
     TrainRequest,
     UploadRejected,
+    _child,
     looks_like_csv,
     resolve_dataset,
     store_dataset,
@@ -441,3 +443,67 @@ def test_a_symlinked_dataset_never_escapes_the_directory(tmp_path: Path) -> None
 
     with pytest.raises(KeyError):
         resolve_dataset(dataset_id, uploads)
+
+
+# --- 3. the real child ---------------------------------------------------------
+
+
+def _run_child(request: TrainRequest) -> dict[str, object]:
+    """Call `_child` in this process and return whatever it sent back.
+
+    In-process, which the stubs above deliberately are not. Those test the parent;
+    this tests the child, and the two halves of the runner are only ever connected
+    through the pipe. Running it here rather than spawning means coverage sees it
+    - a spawned child's lines are invisible to coverage.py without subprocess
+    instrumentation - and it costs nothing, because `_child` closes the connection
+    itself in a `finally`.
+    """
+    parent, child = Pipe(duplex=False)
+    try:
+        _child(child, request, "WARNING")
+        assert parent.poll(), "the child sent nothing before closing the pipe"
+        received: dict[str, object] = parent.recv()
+        return received
+    finally:
+        parent.close()
+
+
+def test_the_real_child_reports_the_run_it_published(raw_csv: Path, tmp_path: Path) -> None:
+    """A genuine fit through `_child`, in this process.
+
+    `tests/test_routes_admin.py::test_a_real_retrain_publishes_a_run_and_the_service_swaps_to_it`
+    already runs this code end to end, but it runs it *spawned*, where coverage.py
+    cannot see it without subprocess instrumentation - so the child read as
+    untested while being the most consequential twenty lines in the module. Here
+    the same call is made directly, which also lets the assertions be about what
+    came back through the pipe rather than about the service that ends up loaded.
+    """
+    output_dir = tmp_path / "reports"
+    result = _run_child(
+        TrainRequest(
+            dataset=raw_csv,
+            output_dir=output_dir,
+            model_type="logistic_regression",
+            cache_dir=tmp_path / "cache",
+        )
+    )
+
+    run_id = result["run_id"]
+    assert isinstance(run_id, str)
+    assert "logistic_regression" in run_id and "origination_only" in run_id
+    assert (output_dir / "runs" / run_id / "model.joblib").is_file()
+    assert "error" not in result
+
+
+def test_the_real_child_sends_the_failure_back_instead_of_raising(tmp_path: Path) -> None:
+    """A child that raises must answer the pipe, not just die.
+
+    This is the path an operator actually meets: the parent has no traceback, only
+    what came back through the pipe, so an exception that escaped `_child` would
+    surface as a bare exit code and the whole point of a job status - saying why -
+    would be lost.
+    """
+    result = _run_child(_request(tmp_path))
+
+    assert "run_id" not in result
+    assert str(result["error"]).startswith("FileNotFoundError:")
