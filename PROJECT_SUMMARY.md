@@ -392,7 +392,8 @@ The current numbers are lower and mean what they say.
 
 ## Validation Performed
 
-`pytest -q` passes 687 tests with 3 skipped.
+`pytest -q` passes 703 tests with 3 skipped, at 96.6% line and branch coverage.
+CI's floor is 95, ratcheted up and never down.
 
 The three skips are XGBoost paths, skipped because `libomp` is not installed on this machine; the Linux CI job runs them.
 
@@ -446,4 +447,4 @@ The retrain-over-HTTP flow is inherently the most dangerous surface in the proje
 - Built per-applicant reason codes, PSI drift monitoring, per-vintage metric breakdowns, an auto-generated model card and a run registry with rollback, with no SHAP dependency, using logistic regression coefficients and XGBoost's built-in TreeSHAP.
 - Rebuilt the dashboard as vanilla ES modules with a design token layer, cached redraws that issue zero network requests on resize, measured text layout, and sanity banners for statistically meaningless runs, with no build step.
 - Documented every code file on a page with seven required headings, 44 pages plus eight architecture decision records, and enforced the coverage in CI so the docs cannot silently rot.
-- Verified with 687 Python tests, 101 JavaScript tests, strict mypy, ruff, and a CI end-to-end smoke job that boots the service and asserts every documented artifact exists.
+- Verified with 703 Python tests at 96.6% coverage, 104 JavaScript tests, strict mypy, ruff, and a CI end-to-end smoke job that boots the service and asserts every documented artifact exists.
