@@ -61,17 +61,17 @@ Fuller version, including the module dependency layering and the route-by-securi
 
 ## What building this taught me
 
-**A metric that agrees with a broken metric is worse than no metric.** An early artifact reported `auc_roc` 0.0696 next to `ks_statistic` 0.9304. An AUC far below 0.5 beside a near-perfect KS means inverted labels: the model separated the classes almost completely and ranked them backwards. My KS took `.abs()` of the gap between the two cumulative curves, which scored inversion exactly as well as correct separation, so the one number that could have contradicted the AUC agreed with it instead. It's now the maximum of `F_default - F_non_default`, unsigned, and a test asserts scipy's `ks_2samp` returns 1.0 on the same input, because the difference between the two definitions is the whole point.
+My KS statistic took `.abs()` of the gap between the two cumulative curves, so a model with inverted labels scored 0.93 KS next to 0.07 AUC.
+The one metric that should have flagged the bug agreed with it instead.
+It's now the one-sided maximum of `F_default - F_non_default`, and a test checks it against scipy's `ks_2samp`.
 
-**Scaling a missing-value indicator makes it scream.** Found by running my own runbook's `POST /predict` example. Omitting a field that `/api/schema` advertises as optional moved the probability from 0.070 to 0.004 and made that field the largest reason code by an order of magnitude. `SimpleImputer(add_indicator=True)` puts the indicators inside the numeric branch, so `StandardScaler` standardized them, and a column with one gap in a 629-row fit gives its indicator an sd near 0.016. A serving row that omitted the field arrived 60 standard deviations out and contributed -5.0 of a -6.0 log-odds total. The reason code read "revol_bal, value null, reduces risk", which is not a statement the model has evidence for and not something you can put in an adverse action notice. The indicators now ride in their own unscaled `ColumnTransformer` branch.
+`SimpleImputer(add_indicator=True)` put the missing-value indicators inside the numeric branch, so `StandardScaler` scaled them.
+A rare gap gave its indicator a tiny standard deviation, and one omitted field on a `/predict` request pushed that feature 60 standard deviations out and dropped the probability from 0.070 to 0.004.
+The indicators now get their own unscaled branch.
 
-**I measured calibration for weeks without applying it.** The module drew a calibration curve and threw the correction away. `calibrate_model` was never called from anywhere, and it couldn't have worked if it had been: it passed `cv="prefit"`, which scikit-learn removed in 1.9. So every probability the project reported was uncorrected, and because the logistic baseline trained with `class_weight="balanced"`, the calibration plot was a picture of a deliberate reweighting presented as a finding.
-
-**A cost-weighted threshold search will decline everybody if you let it.** With a 5:1 false-negative to false-positive cost ratio, the unconstrained minimum is frequently the bottom of the grid: reject every applicant, miss no defaults, pay nothing. The search now excludes candidates that approve under 20% of applicants, and ties break toward the higher threshold, because equal cost means identical confusion counts and the more permissive of two identical rules is the one worth publishing.
-
-**Routing columns by runtime dtype is how you get 655 one-hot columns.** Building the `ColumnTransformer` from `select_dtypes` sent `earliest_cr_line`, a date string with 655 distinct values, straight into `OneHotEncoder`. It's built from explicit declared numeric and categorical lists now, so the width of the transformed matrix is a property of the feature spec rather than of whatever the training data happened to contain.
-
-**Putting the parsers inside the pickle removes a class of bug and buys a permanent constraint.** Every transformation, including `'13.56%'` to `0.1356` and `' 36 months'` to `36.0`, is a step in the sklearn `Pipeline` that gets pickled with the model. Training and `/predict` cannot diverge because there is no second implementation, which is also why the API accepts either dialect with no per-endpoint parsing code. The price is that a pickle is coupled to its module path forever: `transformers.py` can never move or be renamed, and `BUNDLE_SCHEMA_VERSION` is checked on load so an incompatible bundle is a named refusal instead of an `AttributeError` deep inside joblib.
+I drew calibration curves for weeks without ever applying the correction.
+`calibrate_model` was never called, and it would have failed anyway, since it used `cv="prefit"`, which scikit-learn 1.9 removed.
+The calibrator is now fitted on the validation split and ships inside the run bundle.
 
 ## Documentation
 
