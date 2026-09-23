@@ -47,3 +47,5 @@ mlruns/
 .DS_Store
 .idea/
 .vscode/
+SESSION-*.md
+PROJECT_SUMMARY.md
