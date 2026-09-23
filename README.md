@@ -123,3 +123,7 @@ For the real thing, put the Lending Club extract under `data/raw/` and point `tr
 Pass `--model xgboost` to fit XGBoost, and `--include-lender-priced` to admit the interest rate and grade, which are the lender's own price and so are excluded by default.
 `riskscore compare` fits several variants on one split and publishes the comparison.
 `riskscore activate <run_id>` rolls back to an earlier run without retraining, and `riskscore --help` documents the rest.
+
+## License
+
+MIT, see LICENSE.
